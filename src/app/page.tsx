@@ -473,6 +473,7 @@ function CareerEvolutionMap({
 
 export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
   const [currentRole, setCurrentRole] = useState("");
   const [company, setCompany] = useState("");
   const [query, setQuery] = useState("");
@@ -492,16 +493,23 @@ export default function Home() {
     return parseRoleConnections(answer);
   }, [answer, connections]);
 
-  function resizeTextarea(element: HTMLTextAreaElement) {
-    element.style.height = "auto";
-    element.style.height = `${Math.max(element.scrollHeight, 100)}px`;
+  function scheduleTextareaResize(element: HTMLTextAreaElement) {
+    if (resizeFrameRef.current !== null) {
+      cancelAnimationFrame(resizeFrameRef.current);
+    }
+
+    resizeFrameRef.current = requestAnimationFrame(() => {
+      element.style.height = "auto";
+      element.style.height = `${Math.max(element.scrollHeight, 100)}px`;
+      resizeFrameRef.current = null;
+    });
   }
 
   function handleChipClick(chip: string) {
     setQuery(chip);
     if (textareaRef.current) {
       textareaRef.current.value = chip;
-      resizeTextarea(textareaRef.current);
+      scheduleTextareaResize(textareaRef.current);
     }
   }
 
@@ -616,7 +624,7 @@ export default function Home() {
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
-                  resizeTextarea(event.target);
+                  scheduleTextareaResize(event.target);
                 }}
                 placeholder="e.g. What career paths exist for me? Which roles is this company building toward? I don't want to become an engineer - what else is possible?"
                 className="min-h-[100px] w-full resize-none rounded-[6px] border border-border bg-surface px-4 py-3 text-[15px] text-text outline-none transition focus:border-primary focus:shadow-[0_0_0_3px_rgba(184,92,44,0.1)]"
