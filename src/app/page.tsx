@@ -741,6 +741,7 @@ export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const debounceRef = useRef<number | null>(null);
+  const [userId, setUserId] = useState("");
   const [message, setMessage] = useState("");
   const [context, setContext] = useState<CareerContext>({});
   const [answer, setAnswer] = useState("");
@@ -765,6 +766,15 @@ export default function Home() {
   }, [answer, roleMap]);
   const selectedRole = getSelectedFutureRole(derivedRoleMap, selectedRoleId);
   const futureNodes = getFutureNodes(derivedRoleMap);
+
+  useEffect(() => {
+    let id = window.localStorage.getItem("evo_user_id");
+    if (!id) {
+      id = crypto.randomUUID();
+      window.localStorage.setItem("evo_user_id", id);
+    }
+    setUserId(id);
+  }, []);
 
   useEffect(() => {
     if (debounceRef.current !== null) {
@@ -863,6 +873,7 @@ export default function Home() {
         body: JSON.stringify({
           message,
           mode: "career",
+          user_id: userId,
           context: serializeContext(context),
         }),
       });
