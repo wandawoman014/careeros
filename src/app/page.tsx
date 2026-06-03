@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type ResourceItem = {
   title: string;
@@ -29,12 +29,45 @@ type RoleConnection = {
   future: FutureRole;
 };
 
+type CurrentRoleNode = {
+  id: string;
+  label: string;
+  type: "current";
+  department: string;
+};
+
+type FutureRoleNode = {
+  id: string;
+  label: string;
+  type: "future";
+  description: string;
+  fit: "High Fit" | "Medium Fit";
+  learningPath?: LearningPath;
+};
+
+type RoleMapNode = CurrentRoleNode | FutureRoleNode;
+
+type RoleMapEdge = {
+  from: string;
+  to: string;
+};
+
+type RoleMap = {
+  nodes: RoleMapNode[];
+  edges: RoleMapEdge[];
+};
+
 type ApiResponse = {
   answer?: string;
+  companyId?: string;
+  companyName?: string;
   reportUrl?: string;
   roleConnections?: RoleConnection[];
+  roleMap?: RoleMap;
   source?: "live" | "mock";
   error?: string;
+  needsFollowUp?: boolean;
+  followUpQuestion?: string;
 };
 
 type AnswerBlock =
@@ -43,14 +76,57 @@ type AnswerBlock =
   | { type: "ordered"; items: string[] }
   | { type: "unordered"; items: string[] };
 
+type ChipValue = {
+  value: string;
+  tentative: boolean;
+};
+
+type CareerContext = {
+  current_role?: ChipValue;
+  company?: ChipValue;
+  intent?: ChipValue;
+};
+
+type CareerContextKey = keyof CareerContext;
+
+type EditableChipProps = {
+  chipKey: CareerContextKey;
+  label: string;
+  chip: ChipValue;
+  editingKey: CareerContextKey | null;
+  editingValue: string;
+  accentClass: string;
+  onStartEdit: (key: CareerContextKey, value: string) => void;
+  onChangeValue: (value: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onRemove: (key: CareerContextKey) => void;
+};
+
+const knownCompanies = ["Figma", "Accenture", "McKinsey", "Goldman Sachs", "Deloitte", "Infosys", "Tata 1MG"];
+const roleMatchers: Array<{ label: string; matcher: RegExp; tentative?: boolean }> = [
+  { label: "UX Researcher", matcher: /\bux researcher\b/i },
+  { label: "Design Leader", matcher: /\bdesign leader\b/i },
+  { label: "Product Manager", matcher: /\bproduct manager\b/i },
+  { label: "Product Manager", matcher: /\bi'?m a pm\b|\bpm\b/i, tentative: true },
+  { label: "Designer", matcher: /\bdesigner\b/i, tentative: true },
+  { label: "Researcher", matcher: /\bresearcher\b/i, tentative: true },
+  { label: "Engineer", matcher: /\bengineer\b/i, tentative: true },
+];
+const careerIntentMatchers: Array<{ label: string; matcher: RegExp; tentative?: boolean }> = [
+  { label: "Growth path", matcher: /career paths?|grow|what'?s next|where can/i },
+  { label: "Best-fit roles", matcher: /fit me|best fit|what roles/i },
+  { label: "Non-engineering options", matcher: /non-engineering|don'?t want to become an engineer/i },
+  { label: "Skills to build", matcher: /skills|build next|learn/i, tentative: true },
+  { label: "Company role trends", matcher: /building toward|company building/i },
+];
 const suggestionChips = [
   "Career paths for Design Leader at Tata 1MG",
   "Where can a UX researcher grow at Figma?",
   "Non-engineering AI-era paths",
-  "I'm a PM - what's next for me?",
+  "I'm a PM. What's next for me?",
   "What roles is Accenture building toward?",
 ];
-
 const fallbackConnections: RoleConnection[] = [
   {
     current: { title: "Design Leader", department: "Design" },
@@ -69,7 +145,7 @@ const fallbackConnections: RoleConnection[] = [
           {
             title: "AI Workflow Design Fundamentals",
             source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
+            url: "https://orgos-supriya.vercel.app/",
           },
         ],
       },
@@ -92,7 +168,7 @@ const fallbackConnections: RoleConnection[] = [
           {
             title: "AI Product Operating Model",
             source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
+            url: "https://orgos-supriya.vercel.app/",
           },
         ],
       },
@@ -115,14 +191,13 @@ const fallbackConnections: RoleConnection[] = [
           {
             title: "Decision Storytelling for AI Teams",
             source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
+            url: "https://orgos-supriya.vercel.app/",
           },
         ],
       },
     },
   },
 ];
-
 const departmentBorderColors: Record<string, string> = {
   Design: "#B85C2C",
   Engineering: "#2D6A4F",
@@ -131,6 +206,71 @@ const departmentBorderColors: Record<string, string> = {
   Product: "#B85C2C",
   Default: "#6B6660",
 };
+
+function normalizeLookup(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function detectCompany(message: string): ChipValue | undefined {
+  const normalized = normalizeLookup(message);
+  if (!normalized) {
+    return undefined;
+  }
+
+  for (const company of knownCompanies) {
+    const normalizedCompany = normalizeLookup(company);
+    const exactPattern = new RegExp(`(^|\\b)${normalizedCompany.replace(/\s+/g, "\\s+")}(\\b|$)`, "i");
+    if (exactPattern.test(message)) {
+      return { value: company, tentative: false };
+    }
+    if (normalized.includes(normalizedCompany)) {
+      return { value: company, tentative: true };
+    }
+  }
+
+  return undefined;
+}
+
+function detectRole(message: string): ChipValue | undefined {
+  for (const role of roleMatchers) {
+    if (role.matcher.test(message)) {
+      return { value: role.label, tentative: !!role.tentative };
+    }
+  }
+
+  const match = message.match(/career paths for ([a-z][a-z\s]+)/i);
+  if (match) {
+    return { value: match[1].trim().replace(/\b\w/g, (letter) => letter.toUpperCase()), tentative: true };
+  }
+
+  return undefined;
+}
+
+function detectCareerIntent(message: string): ChipValue | undefined {
+  for (const intent of careerIntentMatchers) {
+    if (intent.matcher.test(message)) {
+      return { value: intent.label, tentative: !!intent.tentative };
+    }
+  }
+
+  return undefined;
+}
+
+function extractCareerContext(message: string): CareerContext {
+  return {
+    current_role: detectRole(message),
+    company: detectCompany(message),
+    intent: detectCareerIntent(message),
+  };
+}
+
+function serializeContext(context: CareerContext) {
+  return {
+    ...(context.current_role?.value ? { current_role: context.current_role.value } : {}),
+    ...(context.company?.value ? { company: context.company.value } : {}),
+    ...(context.intent?.value ? { intent: context.intent.value } : {}),
+  };
+}
 
 function parseIntent(answer: string) {
   const firstLine = answer.split("\n").map((line) => line.trim()).find(Boolean);
@@ -264,6 +404,66 @@ function parseRoleConnections(answer: string): RoleConnection[] {
   return [];
 }
 
+function buildRoleMap(connections: RoleConnection[]): RoleMap {
+  const currentNodes: CurrentRoleNode[] = [];
+  const futureNodes: FutureRoleNode[] = [];
+  const edges: RoleMapEdge[] = [];
+  const currentNodeIds = new Map<string, string>();
+  const futureNodeIds = new Map<string, string>();
+
+  connections.forEach((connection) => {
+    const currentKey = `${connection.current.title}::${connection.current.department}`;
+    let currentId = currentNodeIds.get(currentKey);
+    if (!currentId) {
+      currentId = `current-${currentNodeIds.size + 1}`;
+      currentNodeIds.set(currentKey, currentId);
+      currentNodes.push({
+        id: currentId,
+        label: connection.current.title,
+        type: "current",
+        department: connection.current.department,
+      });
+    }
+
+    const futureKey = connection.future.title;
+    let futureId = futureNodeIds.get(futureKey);
+    if (!futureId) {
+      futureId = `future-${futureNodeIds.size + 1}`;
+      futureNodeIds.set(futureKey, futureId);
+      futureNodes.push({
+        id: futureId,
+        label: connection.future.title,
+        type: "future",
+        description: connection.future.description,
+        fit: connection.future.fit,
+        learningPath: connection.future.learningPath,
+      });
+    }
+
+    if (!edges.some((edge) => edge.from === currentId && edge.to === futureId)) {
+      edges.push({ from: currentId, to: futureId });
+    }
+  });
+
+  return { nodes: [...currentNodes, ...futureNodes], edges };
+}
+
+function getCurrentNodes(roleMap: RoleMap) {
+  return roleMap.nodes.filter((node): node is CurrentRoleNode => node.type === "current");
+}
+
+function getFutureNodes(roleMap: RoleMap) {
+  return roleMap.nodes.filter((node): node is FutureRoleNode => node.type === "future");
+}
+
+function getSelectedFutureRole(roleMap: RoleMap, selectedRoleId: string | null) {
+  if (!selectedRoleId) {
+    return null;
+  }
+
+  return getFutureNodes(roleMap).find((node) => node.id === selectedRoleId) || null;
+}
+
 function AnswerContent({ answer }: { answer: string }) {
   const { intent, blocks } = useMemo(() => parseAnswerBlocks(answer), [answer]);
 
@@ -320,11 +520,67 @@ function AnswerContent({ answer }: { answer: string }) {
   );
 }
 
-function LearningPathPanel({ role, onClose }: { role: FutureRole; onClose: () => void }) {
+function EditableChip({
+  chipKey,
+  label,
+  chip,
+  editingKey,
+  editingValue,
+  accentClass,
+  onStartEdit,
+  onChangeValue,
+  onSave,
+  onCancel,
+  onRemove,
+}: EditableChipProps) {
+  if (editingKey === chipKey) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-full border border-border bg-surface px-3 py-2">
+        <span className="text-[12px] font-medium text-muted">{label}</span>
+        <input
+          autoFocus
+          value={editingValue}
+          onChange={(event) => onChangeValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onSave();
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+          className="min-w-[140px] bg-transparent text-[13px] text-text outline-none"
+        />
+        <button type="button" onClick={onSave} className="text-[12px] font-medium text-primary">
+          Save
+        </button>
+        <button type="button" onClick={onCancel} className="text-[12px] text-muted">
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 ${accentClass}`}>
+      <button type="button" onClick={() => onStartEdit(chipKey, chip.value)} className="flex items-center gap-2 text-left">
+        <span className="text-[12px] font-medium text-muted">{label}</span>
+        <span className="text-[13px] font-medium text-text">{chip.value}{chip.tentative ? "?" : ""}</span>
+      </button>
+      <button type="button" onClick={() => onRemove(chipKey)} className="text-[12px] text-muted transition hover:text-primary">
+        x
+      </button>
+    </div>
+  );
+}
+
+function LearningPathPanel({ role, onClose }: { role: FutureRoleNode; onClose: () => void }) {
   return (
     <section className="fade-in mt-6 overflow-hidden rounded-[6px] border border-border border-t-[3px] border-t-primary bg-surface px-8 py-7 shadow-[0_1px_3px_rgba(28,25,23,0.08)]">
       <div className="mb-6 flex items-start justify-between gap-4">
-        <h3 className="font-display text-[22px] text-text">Your path to {role.title}</h3>
+        <h3 className="font-display text-[22px] text-text">Your path to {role.label}</h3>
         <button type="button" onClick={onClose} className="text-[20px] text-muted transition hover:text-primary">
           x
         </button>
@@ -386,15 +642,20 @@ function LearningPathPanel({ role, onClose }: { role: FutureRole; onClose: () =>
 }
 
 function CareerEvolutionMap({
-  connections,
-  selectedRole,
+  roleMap,
+  selectedRoleId,
   onSelectRole,
 }: {
-  connections: RoleConnection[];
-  selectedRole: FutureRole | null;
-  onSelectRole: (role: FutureRole) => void;
+  roleMap: RoleMap;
+  selectedRoleId: string | null;
+  onSelectRole: (roleId: string) => void;
 }) {
-  const svgHeight = Math.max(connections.length * 88 + 20, 120);
+  const currentNodes = getCurrentNodes(roleMap);
+  const futureNodes = getFutureNodes(roleMap);
+  const rowCount = Math.max(currentNodes.length, futureNodes.length, 1);
+  const svgHeight = Math.max(rowCount * 88 + 20, 120);
+  const currentY = new Map(currentNodes.map((node, index) => [node.id, 34 + index * 88]));
+  const futureY = new Map(futureNodes.map((node, index) => [node.id, 34 + index * 88]));
 
   return (
     <section className="mt-12">
@@ -403,16 +664,16 @@ function CareerEvolutionMap({
 
       <div className="grid grid-cols-[1fr_80px_1fr] gap-0 max-md:grid-cols-1 max-md:gap-4">
         <div>
-          {connections.map((connection) => {
-            const borderColor = departmentBorderColors[connection.current.department] || departmentBorderColors.Default;
+          {currentNodes.map((node) => {
+            const borderColor = departmentBorderColors[node.department] || departmentBorderColors.Default;
             return (
               <article
-                key={`current-${connection.current.title}-${connection.future.title}`}
+                key={node.id}
                 className="mb-3 rounded-[6px] border border-border bg-surface px-4 py-3 shadow-[0_1px_3px_rgba(28,25,23,0.08)]"
                 style={{ borderLeft: `3px solid ${borderColor}` }}
               >
-                <p className="text-[14px] font-semibold text-text">{connection.current.title}</p>
-                <p className="mt-0.5 text-[12px] text-muted">{connection.current.department}</p>
+                <p className="text-[14px] font-semibold text-text">{node.label}</p>
+                <p className="mt-0.5 text-[12px] text-muted">{node.department}</p>
               </article>
             );
           })}
@@ -425,13 +686,18 @@ function CareerEvolutionMap({
                 <path d="M0,0 L0,6 L9,3 z" fill="var(--color-primary)" />
               </marker>
             </defs>
-            {connections.map((connection, index) => {
-              const y = 34 + index * 88;
+            {roleMap.edges.map((edge, index) => {
+              const startY = currentY.get(edge.from);
+              const endY = futureY.get(edge.to);
+              if (!startY || !endY) {
+                return null;
+              }
+
               return (
                 <path
-                  key={`line-${connection.current.title}-${connection.future.title}`}
+                  key={`${edge.from}-${edge.to}`}
                   className="role-line"
-                  d={`M8 ${y} C 28 ${y}, 52 ${y}, 72 ${y}`}
+                  d={`M8 ${startY} C 28 ${startY}, 52 ${endY}, 72 ${endY}`}
                   stroke="var(--color-primary)"
                   strokeWidth="1.5"
                   opacity="0.4"
@@ -444,22 +710,22 @@ function CareerEvolutionMap({
         </div>
 
         <div>
-          {connections.map((connection) => {
-            const active = selectedRole?.title === connection.future.title;
+          {futureNodes.map((node) => {
+            const active = selectedRoleId === node.id;
             return (
               <button
-                key={`future-${connection.current.title}-${connection.future.title}`}
+                key={node.id}
                 type="button"
-                onClick={() => onSelectRole(connection.future)}
+                onClick={() => onSelectRole(node.id)}
                 className={`mb-3 w-full rounded-[6px] bg-primary px-4 py-3 text-left text-white shadow-[0_1px_3px_rgba(28,25,23,0.08)] transition duration-200 ease-out hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-[0_4px_12px_rgba(184,92,44,0.25)] ${active ? "ring-2 ring-[rgba(255,255,255,0.45)]" : ""}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-[14px] font-semibold text-white">{connection.future.title}</p>
-                    <p className="mt-0.5 text-[12px] text-white/80">{connection.future.description}</p>
+                    <p className="text-[14px] font-semibold text-white">{node.label}</p>
+                    <p className="mt-0.5 text-[12px] text-white/80">{node.description}</p>
                   </div>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] text-white ${connection.future.fit === "High Fit" ? "bg-white/20" : "bg-white/12"}`}>
-                    {connection.future.fit}
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] text-white ${node.fit === "High Fit" ? "bg-white/20" : "bg-white/12"}`}>
+                    {node.fit}
                   </span>
                 </div>
               </button>
@@ -474,24 +740,47 @@ function CareerEvolutionMap({
 export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
-  const [currentRole, setCurrentRole] = useState("");
-  const [company, setCompany] = useState("");
-  const [query, setQuery] = useState("");
+  const debounceRef = useRef<number | null>(null);
+  const [message, setMessage] = useState("");
+  const [context, setContext] = useState<CareerContext>({});
   const [answer, setAnswer] = useState("");
   const [reportUrl, setReportUrl] = useState("");
   const [source, setSource] = useState<"live" | "mock" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [connections, setConnections] = useState<RoleConnection[]>([]);
-  const [selectedRole, setSelectedRole] = useState<FutureRole | null>(null);
+  const [roleMap, setRoleMap] = useState<RoleMap | null>(null);
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [activeCompanyName, setActiveCompanyName] = useState("");
+  const [editingKey, setEditingKey] = useState<CareerContextKey | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [needsFollowUp, setNeedsFollowUp] = useState(false);
+  const [followUpQuestion, setFollowUpQuestion] = useState("");
 
-  const derivedConnections = useMemo(() => {
-    if (connections.length > 0) {
-      return connections;
+  const derivedRoleMap = useMemo(() => {
+    if (roleMap) {
+      return roleMap;
     }
 
-    return parseRoleConnections(answer);
-  }, [answer, connections]);
+    return buildRoleMap(parseRoleConnections(answer));
+  }, [answer, roleMap]);
+  const selectedRole = getSelectedFutureRole(derivedRoleMap, selectedRoleId);
+  const futureNodes = getFutureNodes(derivedRoleMap);
+
+  useEffect(() => {
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current);
+    }
+
+    debounceRef.current = window.setTimeout(() => {
+      setContext(extractCareerContext(message));
+    }, 220);
+
+    return () => {
+      if (debounceRef.current !== null) {
+        window.clearTimeout(debounceRef.current);
+      }
+    };
+  }, [message]);
 
   function scheduleTextareaResize(element: HTMLTextAreaElement) {
     if (resizeFrameRef.current !== null) {
@@ -500,28 +789,70 @@ export default function Home() {
 
     resizeFrameRef.current = requestAnimationFrame(() => {
       element.style.height = "auto";
-      element.style.height = `${Math.max(element.scrollHeight, 100)}px`;
+      element.style.height = `${Math.max(element.scrollHeight, 140)}px`;
       resizeFrameRef.current = null;
     });
   }
 
-  function handleChipClick(chip: string) {
-    setQuery(chip);
+  function handleSuggestionClick(chip: string) {
+    setMessage(chip);
+    setNeedsFollowUp(false);
+    setFollowUpQuestion("");
+    setError("");
     if (textareaRef.current) {
       textareaRef.current.value = chip;
       scheduleTextareaResize(textareaRef.current);
     }
   }
 
+  function handleStartEdit(key: CareerContextKey, value: string) {
+    setEditingKey(key);
+    setEditingValue(value);
+  }
+
+  function handleSaveEdit() {
+    if (!editingKey) {
+      return;
+    }
+
+    const nextValue = editingValue.trim();
+    setContext((current) => {
+      const nextContext = { ...current };
+      if (!nextValue) {
+        delete nextContext[editingKey];
+      } else {
+        nextContext[editingKey] = { value: nextValue, tentative: false };
+      }
+      return nextContext;
+    });
+    setEditingKey(null);
+    setEditingValue("");
+  }
+
+  function handleRemoveChip(key: CareerContextKey) {
+    setContext((current) => {
+      const nextContext = { ...current };
+      delete nextContext[key];
+      return nextContext;
+    });
+    if (editingKey === key) {
+      setEditingKey(null);
+      setEditingValue("");
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!query.trim() || loading) {
+    if (!message.trim() || loading) {
       return;
     }
 
     setLoading(true);
     setError("");
+    setNeedsFollowUp(false);
+    setFollowUpQuestion("");
+    setActiveCompanyName(context.company?.value || "this company");
 
     try {
       const response = await fetch("/api/careeros", {
@@ -530,10 +861,9 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          query,
-          current_role: currentRole,
-          company,
+          message,
           mode: "career",
+          context: serializeContext(context),
         }),
       });
 
@@ -543,33 +873,44 @@ export default function Home() {
       }
 
       const nextAnswer = (data.answer || "").trim();
-      const nextConnections = Array.isArray(data.roleConnections) && data.roleConnections.length > 0 ? data.roleConnections : parseRoleConnections(nextAnswer);
-      const nextSelectedRole = nextConnections.find((connection) => connection.future.learningPath)?.future || nextConnections[0]?.future || null;
+      const nextRoleMap = data.roleMap || buildRoleMap(data.roleConnections?.length ? data.roleConnections : parseRoleConnections(nextAnswer));
+      const nextFutureNodes = getFutureNodes(nextRoleMap);
+      const nextSelectedRoleId = nextFutureNodes.find((node) => node.learningPath)?.id || nextFutureNodes[0]?.id || null;
 
       setAnswer(nextAnswer);
       setReportUrl(data.reportUrl || "");
       setSource(data.source || "live");
-      setConnections(nextConnections);
-      setSelectedRole(nextSelectedRole);
+      setNeedsFollowUp(Boolean(data.needsFollowUp));
+      setFollowUpQuestion(data.followUpQuestion || "");
+      setRoleMap(nextRoleMap);
+      setSelectedRoleId(nextSelectedRoleId);
     } catch (submitError) {
-      const message = submitError instanceof Error ? submitError.message : "Something went wrong.";
-      setError(message);
+      const nextMessage = submitError instanceof Error ? submitError.message : "Something went wrong.";
+      setError(nextMessage);
       setAnswer("");
       setReportUrl("");
       setSource(null);
-      setConnections([]);
-      setSelectedRole(null);
+      setRoleMap(null);
+      setSelectedRoleId(null);
+      setNeedsFollowUp(false);
+      setFollowUpQuestion("");
     } finally {
       setLoading(false);
     }
   }
+
+  const chips: Array<{ key: CareerContextKey; label: string; chip?: ChipValue; accentClass: string }> = [
+    { key: "current_role", label: "Role", chip: context.current_role, accentClass: "border-[rgba(184,92,44,0.18)] bg-[rgba(184,92,44,0.05)]" },
+    { key: "company", label: "Company", chip: context.company, accentClass: "border-border bg-surface" },
+    { key: "intent", label: "Intent", chip: context.intent, accentClass: "border-border bg-surface" },
+  ];
 
   return (
     <main className="bg-bg text-text">
       <nav className="h-14 border-b border-border bg-surface">
         <div className="mx-auto flex h-full max-w-[860px] items-center justify-between px-6">
           <span className="font-display text-[20px] text-primary">CareerOS</span>
-          <a href="https://orgos.vercel.app" target="_blank" rel="noreferrer" className="text-[14px] text-muted transition hover:text-primary">
+          <a href="https://orgos-supriya.vercel.app/" target="_blank" rel="noreferrer" className="text-[14px] text-muted transition hover:text-primary">
             {"<- OrgOS"}
           </a>
         </div>
@@ -588,47 +929,48 @@ export default function Home() {
           </p>
 
           <form onSubmit={handleSubmit} className="mt-10">
-            <div className="mb-5">
-              <label htmlFor="current-role" className="mb-1.5 block text-[13px] text-muted">
-                Your current role
-              </label>
-              <input
-                id="current-role"
-                value={currentRole}
-                onChange={(event) => setCurrentRole(event.target.value)}
-                placeholder="e.g. Design Leader, Product Manager, UX Researcher"
-                className="w-full rounded-[6px] border border-border bg-surface px-4 py-3 text-[15px] text-text outline-none transition focus:border-primary focus:shadow-[0_0_0_3px_rgba(184,92,44,0.1)]"
-              />
-            </div>
-
-            <div className="mb-5">
-              <label htmlFor="company" className="mb-1.5 block text-[13px] text-muted">
-                Target company
-              </label>
-              <input
-                id="company"
-                value={company}
-                onChange={(event) => setCompany(event.target.value)}
-                placeholder="e.g. Tata 1MG, Figma, Infosys"
-                className="w-full rounded-[6px] border border-border bg-surface px-4 py-3 text-[15px] text-text outline-none transition focus:border-primary focus:shadow-[0_0_0_3px_rgba(184,92,44,0.1)]"
-              />
-            </div>
-
             <div>
-              <label htmlFor="query" className="mb-1.5 block text-[13px] text-muted">
-                Your question
+              <label htmlFor="message" className="mb-2 block text-[13px] text-muted">
+                Describe where you are and where you want to go
               </label>
               <textarea
-                id="query"
+                id="message"
                 ref={textareaRef}
-                value={query}
+                value={message}
                 onChange={(event) => {
-                  setQuery(event.target.value);
+                  setMessage(event.target.value);
+                  setNeedsFollowUp(false);
+                  setFollowUpQuestion("");
+                  setError("");
                   scheduleTextareaResize(event.target);
                 }}
-                placeholder="e.g. What career paths exist for me? Which roles is this company building toward? I don't want to become an engineer - what else is possible?"
-                className="min-h-[100px] w-full resize-none rounded-[6px] border border-border bg-surface px-4 py-3 text-[15px] text-text outline-none transition focus:border-primary focus:shadow-[0_0_0_3px_rgba(184,92,44,0.1)]"
+                placeholder="e.g. Where can a UX researcher grow at Figma? I'm a PM. What's next for me in AI-era teams? I don't want to become an engineer. What roles fit me at Accenture?"
+                className="min-h-[140px] w-full resize-none rounded-[12px] border border-border bg-surface px-5 py-4 text-[16px] text-text outline-none transition focus:border-primary focus:shadow-[0_0_0_3px_rgba(184,92,44,0.1)]"
               />
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {chips.map((item) =>
+                item.chip ? (
+                  <EditableChip
+                    key={item.key}
+                    chipKey={item.key}
+                    label={item.label}
+                    chip={item.chip}
+                    editingKey={editingKey}
+                    editingValue={editingValue}
+                    accentClass={item.accentClass}
+                    onStartEdit={handleStartEdit}
+                    onChangeValue={setEditingValue}
+                    onSave={handleSaveEdit}
+                    onCancel={() => {
+                      setEditingKey(null);
+                      setEditingValue("");
+                    }}
+                    onRemove={handleRemoveChip}
+                  />
+                ) : null,
+              )}
             </div>
 
             <div className="chip-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1">
@@ -636,7 +978,7 @@ export default function Home() {
                 <button
                   key={chip}
                   type="button"
-                  onClick={() => handleChipClick(chip)}
+                  onClick={() => handleSuggestionClick(chip)}
                   className="whitespace-nowrap rounded-full border border-border bg-surface px-3.5 py-2 text-[13px] text-muted transition hover:border-primary hover:text-primary"
                 >
                   {chip}
@@ -666,7 +1008,7 @@ export default function Home() {
                   />
                 ))}
               </div>
-              <p className="text-[14px] italic text-muted">CareerOS is mapping your path...</p>
+              <p className="text-[14px] italic text-muted">CareerOS is mapping your path{activeCompanyName && activeCompanyName !== "this company" ? ` for ${activeCompanyName}` : ""}...</p>
             </section>
           ) : null}
 
@@ -695,16 +1037,24 @@ export default function Home() {
             </section>
           ) : null}
 
-          {!loading && selectedRole ? <LearningPathPanel role={selectedRole} onClose={() => setSelectedRole(null)} /> : null}
+          {!loading && followUpQuestion ? (
+            <section className="fade-in mt-6 rounded-[6px] border border-border bg-surface px-6 py-5 shadow-[0_1px_3px_rgba(28,25,23,0.08)]">
+              <p className="text-[12px] font-medium uppercase tracking-[0.1em] text-muted">Follow-up</p>
+              <p className="mt-2 text-[15px] leading-7 text-text">{followUpQuestion}</p>
+              <p className="mt-2 text-[13px] text-muted">Update the message or chips above, then ask again.</p>
+            </section>
+          ) : null}
 
-          {!loading && derivedConnections.length > 0 ? (
-            <CareerEvolutionMap connections={derivedConnections} selectedRole={selectedRole} onSelectRole={setSelectedRole} />
+          {!loading && selectedRole ? <LearningPathPanel role={selectedRole} onClose={() => setSelectedRoleId(null)} /> : null}
+
+          {!loading && !needsFollowUp && futureNodes.length > 0 ? (
+            <CareerEvolutionMap roleMap={derivedRoleMap} selectedRoleId={selectedRoleId} onSelectRole={setSelectedRoleId} />
           ) : null}
         </section>
 
         <footer className="mt-20 flex items-center justify-between border-t border-border py-8 text-[13px] text-muted max-sm:flex-col max-sm:items-start max-sm:gap-3">
           <span>CareerOS by EvolutionOS</span>
-          <a href="https://orgos.vercel.app" target="_blank" rel="noreferrer" className="text-primary">
+          <a href="https://orgos-supriya.vercel.app/" target="_blank" rel="noreferrer" className="text-primary">
             {"-> Try OrgOS"}
           </a>
         </footer>
