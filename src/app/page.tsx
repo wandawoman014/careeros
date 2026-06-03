@@ -104,14 +104,10 @@ type EditableChipProps = {
 };
 
 type CareerTemplateValues = {
+  name: string;
   currentRole: string;
-  goal: string;
-  company: string;
-  pathA: string;
-  pathB: string;
-  priority: string;
-  strength: string;
-  constraint: string;
+  currentOrg: string;
+  targetOrg: string;
 };
 
 const knownCompanies = ["Figma", "Accenture", "McKinsey", "Goldman Sachs", "Deloitte", "Infosys", "Tata 1MG"];
@@ -772,14 +768,10 @@ export default function Home() {
   const [needsFollowUp, setNeedsFollowUp] = useState(false);
   const [followUpQuestion, setFollowUpQuestion] = useState("");
   const [templateValues, setTemplateValues] = useState<CareerTemplateValues>({
+    name: "Supriya Rathi",
     currentRole: "UX Researcher",
-    goal: "stay close to product decisions",
-    company: "Figma",
-    pathA: "AI strategy",
-    pathB: "product insights",
-    priority: "judgment and growth",
-    strength: "research synthesis",
-    constraint: "becoming an engineer",
+    currentOrg: "MediBuddy",
+    targetOrg: "",
   });
 
   const derivedRoleMap = useMemo(() => {
@@ -1022,107 +1014,54 @@ export default function Home() {
               )}
             </div>
 
-            <div className="mt-5">
-              <p className="mb-3 text-[12px] uppercase tracking-[0.08em] text-muted">Try a fill-in-the-blank prompt</p>
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-[12px] border border-border bg-surface p-4">
-                  <p className="mb-3 text-[13px] font-medium text-text">Best-fit path</p>
-                  <div className="space-y-2 text-[13px] leading-6 text-muted">
-                    <span>I am a</span>
-                    <input
-                      value={templateValues.currentRole}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, currentRole: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                    <span>who wants to</span>
-                    <input
-                      value={templateValues.goal}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, goal: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                    <span>What paths fit me at</span>
-                    <input
-                      value={templateValues.company}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, company: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      applyTemplate(`I am a ${templateValues.currentRole} who wants to ${templateValues.goal}. What paths fit me at ${templateValues.company}?`)
-                    }
-                    className="mt-4 text-[13px] font-medium text-primary"
-                  >
-                    Use template
-                  </button>
+            <div className="mt-5 rounded-[18px] border border-border bg-surface p-5 shadow-[0_1px_3px_rgba(28,25,23,0.06)]">
+              <div className="flex items-start justify-between gap-4 max-md:flex-col">
+                <div>
+                  <p className="text-[12px] uppercase tracking-[0.08em] text-muted">Guided prompt</p>
+                  <h3 className="font-display mt-2 text-[24px] leading-tight text-text">Fill in the blanks, then map your path</h3>
+                  <p className="mt-2 max-w-[560px] text-[14px] leading-6 text-muted">
+                    Keep it personal and readable, so the ask feels like a real career brief.
+                  </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyTemplate(
+                      `I am ${templateValues.name}, ${templateValues.currentRole} at ${templateValues.currentOrg} and looking for relevant career path at ${templateValues.targetOrg || "an optional target organization"}.`,
+                    )
+                  }
+                  className="rounded-[999px] border border-primary px-4 py-2 text-[13px] font-medium text-primary transition hover:bg-[rgba(184,92,44,0.05)]"
+                >
+                  Use this template
+                </button>
+              </div>
 
-                <div className="rounded-[12px] border border-border bg-surface p-4">
-                  <p className="mb-3 text-[13px] font-medium text-text">Compare directions</p>
-                  <div className="space-y-2 text-[13px] leading-6 text-muted">
-                    <span>At</span>
-                    <input
-                      value={templateValues.company}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, company: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                    <span>should I move toward</span>
-                    <input
-                      value={templateValues.pathA}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, pathA: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                    <span>or</span>
-                    <input
-                      value={templateValues.pathB}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, pathB: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                    <span>if I care about</span>
-                    <input
-                      value={templateValues.priority}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, priority: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      applyTemplate(
-                        `At ${templateValues.company}, should I move toward ${templateValues.pathA} or ${templateValues.pathB} if I care about ${templateValues.priority}?`,
-                      )
-                    }
-                    className="mt-4 text-[13px] font-medium text-primary"
-                  >
-                    Use template
-                  </button>
-                </div>
-
-                <div className="rounded-[12px] border border-border bg-surface p-4">
-                  <p className="mb-3 text-[13px] font-medium text-text">Constraint-aware path</p>
-                  <div className="space-y-2 text-[13px] leading-6 text-muted">
-                    <span>I enjoy</span>
-                    <input
-                      value={templateValues.strength}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, strength: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                    <span>and want to avoid</span>
-                    <input
-                      value={templateValues.constraint}
-                      onChange={(event) => setTemplateValues((current) => ({ ...current, constraint: event.target.value }))}
-                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => applyTemplate(`I enjoy ${templateValues.strength} and want to avoid ${templateValues.constraint}. What should I aim for?`)}
-                    className="mt-4 text-[13px] font-medium text-primary"
-                  >
-                    Use template
-                  </button>
-                </div>
+              <div className="mt-5 rounded-[14px] bg-[rgba(184,92,44,0.05)] px-4 py-4 text-[18px] leading-[1.9] text-text max-md:text-[16px]">
+                <span className="text-muted">I am </span>
+                <input
+                  value={templateValues.name}
+                  onChange={(event) => setTemplateValues((current) => ({ ...current, name: event.target.value }))}
+                  className="mx-1 inline-block min-w-[160px] rounded-[10px] border border-[rgba(184,92,44,0.18)] bg-white px-3 py-2 text-[16px] font-medium text-text outline-none"
+                />
+                <span className="text-muted">, </span>
+                <input
+                  value={templateValues.currentRole}
+                  onChange={(event) => setTemplateValues((current) => ({ ...current, currentRole: event.target.value }))}
+                  className="mx-1 inline-block min-w-[180px] rounded-[10px] border border-[rgba(184,92,44,0.18)] bg-white px-3 py-2 text-[16px] font-medium text-text outline-none"
+                />
+                <span className="text-muted"> at </span>
+                <input
+                  value={templateValues.currentOrg}
+                  onChange={(event) => setTemplateValues((current) => ({ ...current, currentOrg: event.target.value }))}
+                  className="mx-1 inline-block min-w-[170px] rounded-[10px] border border-[rgba(184,92,44,0.18)] bg-white px-3 py-2 text-[16px] font-medium text-text outline-none"
+                />
+                <span className="text-muted"> and looking for relevant career path at </span>
+                <input
+                  value={templateValues.targetOrg}
+                  onChange={(event) => setTemplateValues((current) => ({ ...current, targetOrg: event.target.value }))}
+                  placeholder="Optional target org name"
+                  className="mx-1 inline-block min-w-[230px] rounded-[10px] border border-[rgba(184,92,44,0.18)] bg-white px-3 py-2 text-[16px] font-medium text-text outline-none"
+                />
               </div>
             </div>
 
