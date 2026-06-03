@@ -1,3 +1,4 @@
+import { getMemories, saveMemory } from "@/lib/memory";
 import { NextRequest, NextResponse } from "next/server";
 
 type ResourceItem = {
@@ -379,6 +380,7 @@ export async function POST(req: NextRequest) {
   const company = asString(contextValue.company) || asString(payload.company) || "";
   const intent = asString(contextValue.intent) || asString(payload.intent) || "";
   const companyId = asString(payload.company_id) || inferCompanyId(company) || undefined;
+  const userId = asString(payload.user_id) || asString(payload.userId) || undefined;
 
   if (!message) {
     return NextResponse.json({ error: "Message cannot be blank." }, { status: 400 });
@@ -442,6 +444,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const memoryContext = userId ? await getMemories(userId) : "";
     const webhookResponse = await fetch(webhookUrl, {
       method: "POST",
       headers: {
@@ -453,6 +456,8 @@ export async function POST(req: NextRequest) {
         current_role: currentRole,
         company,
         ...(companyId ? { company_id: companyId } : {}),
+        ...(userId ? { user_id: userId } : {}),
+        ...(memoryContext ? { memory_context: memoryContext } : {}),
         ...(intent ? { intent } : {}),
         mode: "career",
         context: {
@@ -473,12 +478,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Data mismatch - please retry" }, { status: 409 });
     }
 
+    const fallbackRoleConnections = fallbackConnections.map((connection) =>
+      connection.current.title === currentRole
+        ? connection
+        : {
+            ...connection,
+            current: {
+              title: currentRole,
+              department: departmentForRole(currentRole),
+            },
+          },
+    );
+    const answer = normalized.answer || generalCareerAnswer(currentRole, intent);
+    const roleConnections = normalized.roleConnections || (normalized.needsFollowUp ? undefined : fallbackRoleConnections);
+    const roleMap = normalized.roleMap || (roleConnections ? buildRoleMap(roleConnections) : undefined);
+
+    if (userId && answer) {
+      await saveMemory(userId, `${currentRole} at ${company}: ${message}`, answer);
+    }
+
     return NextResponse.json(
       {
-        answer: normalized.answer || generalCareerAnswer(currentRole, intent),
+        answer,
         ...(normalized.reportUrl ? { reportUrl: normalized.reportUrl } : {}),
-        ...(normalized.roleConnections ? { roleConnections: normalized.roleConnections } : {}),
-        ...(normalized.roleMap ? { roleMap: normalized.roleMap } : {}),
+        ...(roleConnections ? { roleConnections } : {}),
+        ...(roleMap ? { roleMap } : {}),
         ...(normalized.needsFollowUp ? { needsFollowUp: true } : {}),
         ...(normalized.followUpQuestion ? { followUpQuestion: normalized.followUpQuestion } : {}),
         ...(normalized.companyId || companyId ? { companyId: normalized.companyId || companyId } : {}),
