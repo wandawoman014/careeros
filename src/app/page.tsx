@@ -363,10 +363,10 @@ function parseAnswerBlocks(answer: string): { intent?: string; blocks: AnswerBlo
 function buildCareerTemplatePrompt(values: CareerTemplateValues) {
   const base = `I am ${values.name}, ${values.currentRole} at ${values.currentOrg}`;
   if (values.targetOrg.trim()) {
-    return `${base} and looking for relevant career path at ${values.targetOrg.trim()}.`;
+    return `${base} and looking for relevant AI empowered career path at ${values.targetOrg.trim()}.`;
   }
 
-  return `${base} and looking for a relevant next career path.`;
+  return `${base} and looking for a relevant AI empowered career path.`;
 }
 
 function defaultLearningPathForRole(role: FutureRole): LearningPath {
@@ -784,8 +784,6 @@ function CareerEvolutionMap({
 }
 
 export default function Home() {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const resizeFrameRef = useRef<number | null>(null);
   const debounceRef = useRef<number | null>(null);
   const [userId, setUserId] = useState("");
   const [message, setMessage] = useState("");
@@ -803,10 +801,10 @@ export default function Home() {
   const [needsFollowUp, setNeedsFollowUp] = useState(false);
   const [followUpQuestion, setFollowUpQuestion] = useState("");
   const [templateValues, setTemplateValues] = useState<CareerTemplateValues>({
-    name: "Supriya Rathi",
-    currentRole: "UX Researcher",
-    currentOrg: "MediBuddy",
-    targetOrg: "",
+    name: "Priya Nair",
+    currentRole: "Product Designer",
+    currentOrg: "Figma",
+    targetOrg: "Figma",
   });
 
   const derivedRoleMap = useMemo(() => {
@@ -844,39 +842,12 @@ export default function Home() {
     };
   }, [message]);
 
-  function scheduleTextareaResize(element: HTMLTextAreaElement) {
-    if (resizeFrameRef.current !== null) {
-      cancelAnimationFrame(resizeFrameRef.current);
-    }
-
-    resizeFrameRef.current = requestAnimationFrame(() => {
-      element.style.height = "auto";
-      element.style.height = `${Math.max(element.scrollHeight, 140)}px`;
-      resizeFrameRef.current = null;
-    });
-  }
-
-  function handleSuggestionClick(chip: string) {
-    setMessage(chip);
-    setNeedsFollowUp(false);
-    setFollowUpQuestion("");
-    setError("");
-    if (textareaRef.current) {
-      textareaRef.current.value = chip;
-      scheduleTextareaResize(textareaRef.current);
-    }
-  }
-
   function applyTemplate(prompt: string) {
     setMessage(prompt);
     setContext(extractCareerContext(prompt));
     setNeedsFollowUp(false);
     setFollowUpQuestion("");
     setError("");
-    if (textareaRef.current) {
-      textareaRef.current.value = prompt;
-      scheduleTextareaResize(textareaRef.current);
-    }
   }
 
   function handleStartEdit(key: CareerContextKey, value: string) {
@@ -996,7 +967,7 @@ export default function Home() {
 
   return (
     <main className="bg-bg text-text">
-      <nav className="h-14 border-b border-border bg-surface">
+      <nav className="sticky top-0 z-30 h-14 border-b border-border bg-surface/95 backdrop-blur">
         <div className="mx-auto flex h-full max-w-[860px] items-center justify-between px-6">
           <span className="font-display text-[20px] text-primary">CareerOS</span>
           <a href="https://orgos-supriya.vercel.app/" target="_blank" rel="noreferrer" className="text-[14px] text-muted transition hover:text-primary">
@@ -1024,14 +995,12 @@ export default function Home() {
               </label>
               <textarea
                 id="message"
-                ref={textareaRef}
                 value={message}
                 onChange={(event) => {
                   setMessage(event.target.value);
                   setNeedsFollowUp(false);
                   setFollowUpQuestion("");
                   setError("");
-                  scheduleTextareaResize(event.target);
                 }}
                 placeholder="e.g. Where can a UX researcher grow at Figma? I'm a PM. What's next for me in AI-era teams? I don't want to become an engineer. What roles fit me at Accenture?"
                 className="min-h-[140px] w-full resize-none rounded-[12px] border border-border bg-surface px-5 py-4 text-[16px] text-text outline-none transition focus:border-primary focus:shadow-[0_0_0_3px_rgba(184,92,44,0.1)]"
@@ -1100,7 +1069,7 @@ export default function Home() {
                   onChange={(event) => setTemplateValues((current) => ({ ...current, currentOrg: event.target.value }))}
                   className="mx-1 inline-block min-w-[170px] rounded-[10px] border border-[rgba(184,92,44,0.18)] bg-white px-3 py-2 text-[16px] font-medium text-text outline-none"
                 />
-                <span className="text-muted"> and looking for relevant career path at </span>
+                <span className="text-muted"> and looking for relevant AI empowered career path at </span>
                 <input
                   value={templateValues.targetOrg}
                   onChange={(event) => setTemplateValues((current) => ({ ...current, targetOrg: event.target.value }))}
@@ -1119,7 +1088,11 @@ export default function Home() {
             </button>
           </form>
 
-          {error ? <p className="mt-4 text-[14px] text-primary">{error}</p> : null}
+          {error ? (
+            <div className="mt-4 rounded-[10px] border border-[rgba(184,92,44,0.25)] bg-[rgba(184,92,44,0.08)] px-4 py-3 text-[14px] text-primary">
+              {error}
+            </div>
+          ) : null}
 
           {loading ? (
             <section className="fade-in mt-8 rounded-[6px] border border-border border-l-[3px] border-l-primary bg-surface px-8 py-7 shadow-[0_1px_3px_rgba(28,25,23,0.08)]">
