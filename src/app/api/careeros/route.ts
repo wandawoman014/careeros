@@ -25,11 +25,59 @@ type RoleConnection = {
   };
 };
 
+type CurrentRoleNode = {
+  id: string;
+  label: string;
+  type: "current";
+  department: string;
+};
+
+type FutureRoleNode = {
+  id: string;
+  label: string;
+  type: "future";
+  description: string;
+  fit: "High Fit" | "Medium Fit";
+  learningPath?: LearningPath;
+};
+
+type RoleMapNode = CurrentRoleNode | FutureRoleNode;
+
+type RoleMapEdge = {
+  from: string;
+  to: string;
+};
+
+type RoleMap = {
+  nodes: RoleMapNode[];
+  edges: RoleMapEdge[];
+};
+
 type CareerOSApiResponse = {
   answer: string;
+  companyId?: string;
+  companyName?: string;
   reportUrl?: string;
   roleConnections?: RoleConnection[];
+  roleMap?: RoleMap;
   source: "live" | "mock";
+  needsFollowUp?: boolean;
+  followUpQuestion?: string;
+};
+
+type CareerContext = {
+  current_role?: string;
+  company?: string;
+  intent?: string;
+};
+
+const knownCompanyIds: Record<string, string> = {
+  figma: "ORG-FIGMA-001",
+  accenture: "ORG-ACCENTURE-001",
+  mckinsey: "ORG-MCKINSEY-001",
+  "goldman sachs": "ORG-GOLDMAN-001",
+  deloitte: "ORG-DELOITTE-001",
+  infosys: "ORG-INFOSYS-001",
 };
 
 const fallbackConnections: RoleConnection[] = [
@@ -39,26 +87,6 @@ const fallbackConnections: RoleConnection[] = [
       title: "AI Experience Strategy Lead",
       description: "Shapes human-centered AI workflows without requiring a move into engineering.",
       fit: "High Fit",
-      learningPath: {
-        skills: ["Workflow design", "Prompt systems", "Evaluation frameworks"],
-        steps: [
-          "Document the decisions in your current role that still need strong human judgment.",
-          "Prototype one AI-assisted workflow with clear review gates and escalation points.",
-          "Build a rubric for quality, trust, and time saved before scaling the new motion.",
-        ],
-        resources: [
-          {
-            title: "AI Workflow Design Fundamentals",
-            source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
-          },
-          {
-            title: "Human-in-the-Loop Playbook",
-            source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
-          },
-        ],
-      },
     },
   },
   {
@@ -67,21 +95,6 @@ const fallbackConnections: RoleConnection[] = [
       title: "AI Product Operations Partner",
       description: "Turns product strategy into systems, rituals, and AI-enabled execution patterns.",
       fit: "Medium Fit",
-      learningPath: {
-        skills: ["Decision ops", "Experiment design", "Cross-functional orchestration"],
-        steps: [
-          "Identify one recurring coordination bottleneck that AI can help structure but not own.",
-          "Create a weekly insight loop that translates product signals into leadership actions.",
-          "Define ownership rules for where AI assists, where humans approve, and where agents escalate.",
-        ],
-        resources: [
-          {
-            title: "AI Product Operating Model",
-            source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
-          },
-        ],
-      },
     },
   },
   {
@@ -90,54 +103,9 @@ const fallbackConnections: RoleConnection[] = [
       title: "AI Insight Translator",
       description: "Converts behavior signals and qualitative evidence into decision-ready guidance.",
       fit: "High Fit",
-      learningPath: {
-        skills: ["Insight synthesis", "Narrative framing", "Signal clustering"],
-        steps: [
-          "Turn your current research outputs into a reusable operating brief for product and leadership teams.",
-          "Pair AI-assisted clustering with researcher-led recommendation writing on one live project.",
-          "Build a repeatable template for communicating confidence, tradeoffs, and action priority.",
-        ],
-        resources: [
-          {
-            title: "Decision Storytelling for AI Teams",
-            source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
-          },
-        ],
-      },
     },
   },
 ];
-
-const fallbackAnswer = (currentRole: string, company: string, query: string) => {
-  const roleLabel = currentRole.trim() || "your current role";
-  const companyLabel = company.trim() || "your target company";
-  const queryLabel = query.trim() || "career paths in the AI era";
-
-  return [
-    "Intent: Career path mapping",
-    "",
-    `CareerOS is using a sample pathway response for ${roleLabel} at ${companyLabel}. Your prompt, \"${queryLabel}\", points toward roles that build on your existing strengths without forcing a move into engineering.`,
-    "",
-    "CURRENT ROLE:",
-    `${roleLabel}`,
-    "",
-    "FUTURE PATHS:",
-    `${roleLabel} -> AI Experience Strategy Lead | High Fit | Shapes human-centered AI workflows and service design patterns.`,
-    `${roleLabel} -> AI Product Operations Partner | Medium Fit | Coordinates strategy, systems, and execution rituals across AI-enabled teams.`,
-    `${roleLabel} -> AI Insight Translator | High Fit | Turns signals, interviews, and research into operating guidance leaders can act on.`,
-    "",
-    "WHY THESE PATHS FIT:",
-    "- They preserve strengths in judgment, communication, and systems thinking.",
-    "- They move you closer to AI-era leverage without requiring deep coding specialization.",
-    "- They align with the operating roles organizations are building right now.",
-    "",
-    "NEXT STEPS:",
-    "1. Pick one future role that feels energizing rather than merely safe.",
-    "2. Build a visible project that proves you can operate in that direction now.",
-    "3. Use OrgOS to understand how the company itself is reorganizing around AI.",
-  ].join("\n");
-};
 
 const safeParseJson = (value: string): unknown | null => {
   const trimmed = value.trim();
@@ -154,63 +122,90 @@ const safeParseJson = (value: string): unknown | null => {
 
 const asString = (value: unknown) => (typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined);
 
-const asStringArray = (value: unknown) => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+const normalizeLookup = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+const inferCompanyId = (company: string) => knownCompanyIds[normalizeLookup(company)];
+
+const departmentForRole = (role: string) => {
+  const normalized = role.toLowerCase();
+  if (normalized.includes("research")) {
+    return "Research";
+  }
+  if (normalized.includes("design")) {
+    return "Design";
+  }
+  if (normalized.includes("product") || normalized.includes("pm")) {
+    return "Product";
+  }
+  if (normalized.includes("engineer")) {
+    return "Engineering";
+  }
+  return "Default";
 };
 
-const normalizeResources = (value: unknown): ResourceItem[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+const buildRoleMap = (connections: RoleConnection[]): RoleMap => {
+  const currentNodes: CurrentRoleNode[] = [];
+  const futureNodes: FutureRoleNode[] = [];
+  const edges: RoleMapEdge[] = [];
+  const currentNodeIds = new Map<string, string>();
+  const futureNodeIds = new Map<string, string>();
 
-  return value.flatMap((item) => {
-    if (typeof item === "string" && item.trim()) {
-      return [{ title: item.trim(), source: "CareerOS resource", url: "https://orgos.vercel.app" }];
+  connections.forEach((connection) => {
+    const currentKey = `${connection.current.title}::${connection.current.department}`;
+    let currentId = currentNodeIds.get(currentKey);
+    if (!currentId) {
+      currentId = `current-${currentNodeIds.size + 1}`;
+      currentNodeIds.set(currentKey, currentId);
+      currentNodes.push({
+        id: currentId,
+        label: connection.current.title,
+        type: "current",
+        department: connection.current.department,
+      });
     }
 
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      return [];
+    const futureKey = connection.future.title;
+    let futureId = futureNodeIds.get(futureKey);
+    if (!futureId) {
+      futureId = `future-${futureNodeIds.size + 1}`;
+      futureNodeIds.set(futureKey, futureId);
+      futureNodes.push({
+        id: futureId,
+        label: connection.future.title,
+        type: "future",
+        description: connection.future.description,
+        fit: connection.future.fit,
+        learningPath: connection.future.learningPath,
+      });
     }
 
-    const record = item as Record<string, unknown>;
-    const title = asString(record.title) || asString(record.name);
-    if (!title) {
-      return [];
+    if (!edges.some((edge) => edge.from === currentId && edge.to === futureId)) {
+      edges.push({ from: currentId, to: futureId });
     }
-
-    return [
-      {
-        title,
-        source: asString(record.source) || asString(record.provider) || "CareerOS resource",
-        url: asString(record.url) || asString(record.link) || "https://orgos.vercel.app",
-      },
-    ];
   });
+
+  return { nodes: [...currentNodes, ...futureNodes], edges };
 };
 
-const normalizeLearningPath = (value: unknown): LearningPath | undefined => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
+const generalCareerAnswer = (currentRole: string, intent: string) => {
+  const roleLabel = currentRole.trim() || "your current role";
+  const intentLabel = intent.trim() || "what comes next";
 
-  const record = value as Record<string, unknown>;
-  const skills = asStringArray(record.skills).length > 0 ? asStringArray(record.skills) : asStringArray(record.skillGaps);
-  const steps = asStringArray(record.steps).length > 0 ? asStringArray(record.steps) : asStringArray(record.actions);
-  const resources = normalizeResources(record.resources).length > 0 ? normalizeResources(record.resources) : normalizeResources(record.learn_now);
-
-  if (skills.length === 0 && steps.length === 0 && resources.length === 0) {
-    return undefined;
-  }
-
-  return {
-    skills,
-    steps,
-    resources,
-  };
+  return [
+    "Intent: Career path overview",
+    "",
+    `${roleLabel} can move into higher-leverage AI-era work without forcing a shift into engineering. Here is a general read on ${intentLabel}.`,
+    "",
+    "GOOD NEXT MOVES:",
+    "1. Move toward roles that reward judgment, systems thinking, and communication.",
+    "2. Build one visible project that shows how you work with AI tools, not just around them.",
+    "3. Choose a direction that compounds your existing strengths rather than restarting from zero.",
+    "",
+    "PROMISING ROLE DIRECTIONS:",
+    `${roleLabel} -> AI Experience Strategy Lead | High Fit | Shapes human-centered AI workflows and service design patterns.`,
+    `${roleLabel} -> AI Product Operations Partner | Medium Fit | Connects strategy, systems, and execution across AI-enabled teams.`,
+    `${roleLabel} -> AI Insight Translator | High Fit | Turns signals, interviews, and research into operating guidance leaders can act on.`,
+  ].join("\n");
 };
 
 const normalizeRoleConnection = (value: unknown): RoleConnection | null => {
@@ -219,12 +214,8 @@ const normalizeRoleConnection = (value: unknown): RoleConnection | null => {
   }
 
   const record = value as Record<string, unknown>;
-  const currentRecord = (record.current && typeof record.current === "object" && !Array.isArray(record.current)
-    ? record.current
-    : {}) as Record<string, unknown>;
-  const futureRecord = (record.future && typeof record.future === "object" && !Array.isArray(record.future)
-    ? record.future
-    : {}) as Record<string, unknown>;
+  const currentRecord = record.current && typeof record.current === "object" && !Array.isArray(record.current) ? (record.current as Record<string, unknown>) : {};
+  const futureRecord = record.future && typeof record.future === "object" && !Array.isArray(record.future) ? (record.future as Record<string, unknown>) : {};
 
   const currentTitle =
     asString(currentRecord.title) ||
@@ -244,13 +235,10 @@ const normalizeRoleConnection = (value: unknown): RoleConnection | null => {
     return null;
   }
 
-  const fitSource = asString(futureRecord.fit) || asString(record.fit) || asString(record.match) || "Medium Fit";
-  const fit = /high/i.test(fitSource) ? "High Fit" : "Medium Fit";
-
   return {
     current: {
       title: currentTitle,
-      department: asString(currentRecord.department) || asString(currentRecord.team) || asString(record.department) || "Default",
+      department: asString(currentRecord.department) || asString(record.department) || departmentForRole(currentTitle),
     },
     future: {
       title: futureTitle,
@@ -259,13 +247,8 @@ const normalizeRoleConnection = (value: unknown): RoleConnection | null => {
         asString(futureRecord.summary) ||
         asString(record.description) ||
         asString(record.summary) ||
-        "Full learning path available in your CareerOS report.",
-      fit,
-      learningPath:
-        normalizeLearningPath(futureRecord.learningPath) ||
-        normalizeLearningPath(futureRecord.learning_path) ||
-        normalizeLearningPath(record.learningPath) ||
-        normalizeLearningPath(record.learning_path),
+        "Future role",
+      fit: /high/i.test(asString(futureRecord.fit) || asString(record.fit) || "") ? "High Fit" : "Medium Fit",
     },
   };
 };
@@ -275,11 +258,74 @@ const normalizeRoleConnections = (value: unknown): RoleConnection[] | undefined 
     return undefined;
   }
 
-  const connections = value.map(normalizeRoleConnection).filter((item): item is RoleConnection => item !== null);
-  return connections.length > 0 ? connections : undefined;
+  const items = value.map(normalizeRoleConnection).filter((item): item is RoleConnection => item !== null);
+  return items.length > 0 ? items : undefined;
 };
 
-const normalizeWebhookPayload = (payload: unknown): Omit<CareerOSApiResponse, "source"> => {
+const normalizeRoleMapNode = (value: unknown): RoleMapNode | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const type = asString(record.type)?.toLowerCase();
+  const id = asString(record.id);
+  const label = asString(record.label) || asString(record.title) || asString(record.name);
+
+  if (!type || !id || !label || (type !== "current" && type !== "future")) {
+    return null;
+  }
+
+  if (type === "current") {
+    return {
+      id,
+      label,
+      type,
+      department: asString(record.department) || asString(record.team) || "Default",
+    };
+  }
+
+  return {
+    id,
+    label,
+    type,
+    description: asString(record.description) || asString(record.summary) || "Future role",
+    fit: /high/i.test(asString(record.fit) || "") ? "High Fit" : "Medium Fit",
+  };
+};
+
+const normalizeRoleMapEdge = (value: unknown): RoleMapEdge | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const from = asString(record.from) || asString(record.source);
+  const to = asString(record.to) || asString(record.target);
+  if (!from || !to) {
+    return null;
+  }
+
+  return { from, to };
+};
+
+const normalizeRoleMap = (value: unknown): RoleMap | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const nodes = (Array.isArray(record.nodes) ? record.nodes : []).map(normalizeRoleMapNode).filter((item): item is RoleMapNode => item !== null);
+  const edges = (Array.isArray(record.edges) ? record.edges : []).map(normalizeRoleMapEdge).filter((item): item is RoleMapEdge => item !== null);
+
+  if (nodes.length === 0 || edges.length === 0) {
+    return undefined;
+  }
+
+  return { nodes, edges };
+};
+
+const normalizeWebhookPayload = (payload: unknown) => {
   if (typeof payload === "string") {
     return { answer: payload };
   }
@@ -289,14 +335,6 @@ const normalizeWebhookPayload = (payload: unknown): Omit<CareerOSApiResponse, "s
   }
 
   const record = payload as Record<string, unknown>;
-  const answer =
-    asString(record.answer) ||
-    asString(record.text) ||
-    asString(record.message) ||
-    asString(record.output) ||
-    asString(record.response) ||
-    "Webhook returned JSON without answer text.";
-
   const roleConnections =
     normalizeRoleConnections(record.role_connections) ||
     normalizeRoleConnections(record.roleConnections) ||
@@ -306,11 +344,24 @@ const normalizeWebhookPayload = (payload: unknown): Omit<CareerOSApiResponse, "s
     normalizeRoleConnections(record.pathways);
 
   return {
-    answer,
-    ...(asString(record.report_url) || asString(record.reportUrl) || asString(record.url)
-      ? { reportUrl: asString(record.report_url) || asString(record.reportUrl) || asString(record.url) }
-      : {}),
-    ...(roleConnections ? { roleConnections } : {}),
+    answer:
+      asString(record.answer) ||
+      asString(record.text) ||
+      asString(record.message) ||
+      asString(record.output) ||
+      asString(record.response) ||
+      "Webhook returned JSON without answer text.",
+    reportUrl: asString(record.report_url) || asString(record.reportUrl) || asString(record.url),
+    roleConnections,
+    roleMap:
+      normalizeRoleMap(record.role_map) ||
+      normalizeRoleMap(record.roleMap) ||
+      normalizeRoleMap({ nodes: record.nodes, edges: record.edges }) ||
+      (roleConnections ? buildRoleMap(roleConnections) : undefined),
+    needsFollowUp: Boolean(record.needs_follow_up) || Boolean(record.needsFollowUp),
+    followUpQuestion: asString(record.follow_up_question) || asString(record.followUpQuestion),
+    companyId: asString(record.company_id) || asString(record.companyId) || asString(record.organization_id),
+    companyName: asString(record.company) || asString(record.company_name) || asString(record.organization),
   };
 };
 
@@ -322,19 +373,70 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
 
-  const query = asString(payload.query) || asString(payload.question) || "";
-  const currentRole = asString(payload.current_role) || asString(payload.currentRole) || "";
-  const company = asString(payload.company) || asString(payload.company_name) || "";
+  const contextValue = payload.context && typeof payload.context === "object" && !Array.isArray(payload.context) ? (payload.context as CareerContext) : {};
+  const message = asString(payload.message) || asString(payload.query) || asString(payload.question) || "";
+  const currentRole = asString(contextValue.current_role) || asString(payload.current_role) || asString(payload.currentRole) || "";
+  const company = asString(contextValue.company) || asString(payload.company) || "";
+  const intent = asString(contextValue.intent) || asString(payload.intent) || "";
+  const companyId = asString(payload.company_id) || inferCompanyId(company) || undefined;
 
-  if (!query) {
-    return NextResponse.json({ error: "Query cannot be blank." }, { status: 400 });
+  if (!message) {
+    return NextResponse.json({ error: "Message cannot be blank." }, { status: 400 });
+  }
+
+  if (!currentRole) {
+    return NextResponse.json({
+      answer: "",
+      source: "mock",
+      needsFollowUp: true,
+      followUpQuestion: "What's your current role today?",
+      ...(companyId ? { companyId } : {}),
+      ...(company ? { companyName: company } : {}),
+    } satisfies CareerOSApiResponse);
+  }
+
+  if (!company) {
+    const generalConnections = fallbackConnections.map((connection) =>
+      connection.current.title === currentRole
+        ? connection
+        : {
+            ...connection,
+            current: {
+              title: currentRole,
+              department: departmentForRole(currentRole),
+            },
+          },
+    );
+
+    return NextResponse.json({
+      answer: generalCareerAnswer(currentRole, intent),
+      roleConnections: generalConnections,
+      roleMap: buildRoleMap(generalConnections),
+      source: "mock",
+      followUpQuestion: "I can tailor this to a company if you want.",
+    } satisfies CareerOSApiResponse);
   }
 
   const webhookUrl = (process.env.WEBHOOK_URL || process.env.MAKE_WEBHOOK_URL || "").trim();
   if (!webhookUrl) {
+    const fallbackRoleConnections = fallbackConnections.map((connection) =>
+      connection.current.title === currentRole
+        ? connection
+        : {
+            ...connection,
+            current: {
+              title: currentRole,
+              department: departmentForRole(currentRole),
+            },
+          },
+    );
+
     return NextResponse.json({
-      answer: fallbackAnswer(currentRole, company, query),
-      roleConnections: fallbackConnections,
+      answer: generalCareerAnswer(currentRole, intent),
+      companyId,
+      companyName: company,
+      roleConnections: fallbackRoleConnections,
+      roleMap: buildRoleMap(fallbackRoleConnections),
       source: "mock",
     } satisfies CareerOSApiResponse);
   }
@@ -346,29 +448,51 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        query,
+        message,
+        query: message,
         current_role: currentRole,
         company,
+        ...(companyId ? { company_id: companyId } : {}),
+        ...(intent ? { intent } : {}),
         mode: "career",
+        context: {
+          current_role: currentRole,
+          company,
+          ...(intent ? { intent } : {}),
+        },
       }),
       signal: AbortSignal.timeout(30000),
     });
 
     const responseText = await webhookResponse.text();
     const parsed = safeParseJson(responseText);
-    const normalized = parsed === null ? { answer: responseText.trim() || fallbackAnswer(currentRole, company, query) } : normalizeWebhookPayload(parsed);
+    const normalized: ReturnType<typeof normalizeWebhookPayload> =
+      parsed === null ? { answer: responseText.trim() || "Webhook response was empty." } : normalizeWebhookPayload(parsed);
 
-    return NextResponse.json({
-      answer: normalized.answer || fallbackAnswer(currentRole, company, query),
-      ...(normalized.reportUrl ? { reportUrl: normalized.reportUrl } : {}),
-      ...(normalized.roleConnections ? { roleConnections: normalized.roleConnections } : {}),
-      source: webhookResponse.ok ? "live" : "mock",
-    } satisfies CareerOSApiResponse);
+    if (companyId && normalized.companyId && normalized.companyId !== companyId) {
+      return NextResponse.json({ error: "Data mismatch - please retry" }, { status: 409 });
+    }
+
+    return NextResponse.json(
+      {
+        answer: normalized.answer || generalCareerAnswer(currentRole, intent),
+        ...(normalized.reportUrl ? { reportUrl: normalized.reportUrl } : {}),
+        ...(normalized.roleConnections ? { roleConnections: normalized.roleConnections } : {}),
+        ...(normalized.roleMap ? { roleMap: normalized.roleMap } : {}),
+        ...(normalized.needsFollowUp ? { needsFollowUp: true } : {}),
+        ...(normalized.followUpQuestion ? { followUpQuestion: normalized.followUpQuestion } : {}),
+        ...(normalized.companyId || companyId ? { companyId: normalized.companyId || companyId } : {}),
+        ...(normalized.companyName || company ? { companyName: normalized.companyName || company } : {}),
+        source: webhookResponse.ok ? "live" : "mock",
+      } satisfies CareerOSApiResponse,
+      { status: webhookResponse.ok ? 200 : 502 },
+    );
   } catch {
-    return NextResponse.json({
-      answer: fallbackAnswer(currentRole, company, query),
-      roleConnections: fallbackConnections,
-      source: "mock",
-    } satisfies CareerOSApiResponse);
+    return NextResponse.json(
+      {
+        error: `Unable to retrieve role intelligence for ${company}.`,
+      },
+      { status: 502 },
+    );
   }
 }
