@@ -103,6 +103,17 @@ type EditableChipProps = {
   onRemove: (key: CareerContextKey) => void;
 };
 
+type CareerTemplateValues = {
+  currentRole: string;
+  goal: string;
+  company: string;
+  pathA: string;
+  pathB: string;
+  priority: string;
+  strength: string;
+  constraint: string;
+};
+
 const knownCompanies = ["Figma", "Accenture", "McKinsey", "Goldman Sachs", "Deloitte", "Infosys", "Tata 1MG"];
 const roleMatchers: Array<{ label: string; matcher: RegExp; tentative?: boolean }> = [
   { label: "UX Researcher", matcher: /\bux researcher\b/i },
@@ -119,13 +130,6 @@ const careerIntentMatchers: Array<{ label: string; matcher: RegExp; tentative?: 
   { label: "Non-engineering options", matcher: /non-engineering|don'?t want to become an engineer/i },
   { label: "Skills to build", matcher: /skills|build next|learn/i, tentative: true },
   { label: "Company role trends", matcher: /building toward|company building/i },
-];
-const suggestionChips = [
-  "Career paths for Design Leader at Tata 1MG",
-  "Where can a UX researcher grow at Figma?",
-  "Non-engineering AI-era paths",
-  "I'm a PM. What's next for me?",
-  "What roles is Accenture building toward?",
 ];
 const fallbackConnections: RoleConnection[] = [
   {
@@ -270,6 +274,15 @@ function serializeContext(context: CareerContext) {
     ...(context.company?.value ? { company: context.company.value } : {}),
     ...(context.intent?.value ? { intent: context.intent.value } : {}),
   };
+}
+
+function cleanAnswerText(answer: string) {
+  return answer
+    .split("\n")
+    .map((line) => line.replace(/\*\*(.*?)\*\*/g, "$1").trimEnd())
+    .filter((line) => !/^ROUTE:/i.test(line.trim()))
+    .join("\n")
+    .trim();
 }
 
 function parseIntent(answer: string) {
@@ -465,7 +478,7 @@ function getSelectedFutureRole(roleMap: RoleMap, selectedRoleId: string | null) 
 }
 
 function AnswerContent({ answer }: { answer: string }) {
-  const { intent, blocks } = useMemo(() => parseAnswerBlocks(answer), [answer]);
+  const { intent, blocks } = useMemo(() => parseAnswerBlocks(cleanAnswerText(answer)), [answer]);
 
   return (
     <div>
@@ -486,11 +499,13 @@ function AnswerContent({ answer }: { answer: string }) {
 
         if (block.type === "ordered") {
           return (
-            <ol key={`${block.type}-${index}`} className="mb-4 list-none p-0">
+            <ol key={`${block.type}-${index}`} className="mb-4 grid gap-3 p-0 md:grid-cols-2">
               {block.items.map((item, itemIndex) => (
-                <li key={item} className="relative mb-2.5 pl-6 text-[15px] leading-7 text-text last:mb-0">
-                  <span className="absolute left-0 top-0 font-semibold text-primary">{itemIndex + 1}.</span>
-                  {item}
+                <li key={item} className="rounded-[10px] border border-border bg-[rgba(184,92,44,0.04)] px-4 py-3 text-[15px] leading-7 text-text">
+                  <span className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[12px] font-semibold text-white">
+                    {itemIndex + 1}
+                  </span>
+                  <div>{item}</div>
                 </li>
               ))}
             </ol>
@@ -501,8 +516,8 @@ function AnswerContent({ answer }: { answer: string }) {
           return (
             <ul key={`${block.type}-${index}`} className="mb-4 list-none p-0">
               {block.items.map((item) => (
-                <li key={item} className="mb-2.5 text-[15px] leading-7 text-text last:mb-0">
-                  <span className="mr-2.5 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" />
+                <li key={item} className="mb-2.5 rounded-[10px] border border-border px-4 py-3 text-[15px] leading-7 text-text last:mb-0">
+                  <span className="mr-2.5 inline-block h-2 w-2 rounded-full bg-primary align-middle" />
                   <span className="align-middle">{item}</span>
                 </li>
               ))}
@@ -756,6 +771,16 @@ export default function Home() {
   const [editingValue, setEditingValue] = useState("");
   const [needsFollowUp, setNeedsFollowUp] = useState(false);
   const [followUpQuestion, setFollowUpQuestion] = useState("");
+  const [templateValues, setTemplateValues] = useState<CareerTemplateValues>({
+    currentRole: "UX Researcher",
+    goal: "stay close to product decisions",
+    company: "Figma",
+    pathA: "AI strategy",
+    pathB: "product insights",
+    priority: "judgment and growth",
+    strength: "research synthesis",
+    constraint: "becoming an engineer",
+  });
 
   const derivedRoleMap = useMemo(() => {
     if (roleMap) {
@@ -811,6 +836,18 @@ export default function Home() {
     setError("");
     if (textareaRef.current) {
       textareaRef.current.value = chip;
+      scheduleTextareaResize(textareaRef.current);
+    }
+  }
+
+  function applyTemplate(prompt: string) {
+    setMessage(prompt);
+    setContext(extractCareerContext(prompt));
+    setNeedsFollowUp(false);
+    setFollowUpQuestion("");
+    setError("");
+    if (textareaRef.current) {
+      textareaRef.current.value = prompt;
       scheduleTextareaResize(textareaRef.current);
     }
   }
@@ -961,6 +998,7 @@ export default function Home() {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
+              {chips.some((item) => item.chip) ? <p className="w-full text-[12px] uppercase tracking-[0.08em] text-muted">Detected context</p> : null}
               {chips.map((item) =>
                 item.chip ? (
                   <EditableChip
@@ -984,17 +1022,108 @@ export default function Home() {
               )}
             </div>
 
-            <div className="chip-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1">
-              {suggestionChips.map((chip) => (
-                <button
-                  key={chip}
-                  type="button"
-                  onClick={() => handleSuggestionClick(chip)}
-                  className="whitespace-nowrap rounded-full border border-border bg-surface px-3.5 py-2 text-[13px] text-muted transition hover:border-primary hover:text-primary"
-                >
-                  {chip}
-                </button>
-              ))}
+            <div className="mt-5">
+              <p className="mb-3 text-[12px] uppercase tracking-[0.08em] text-muted">Try a fill-in-the-blank prompt</p>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-[12px] border border-border bg-surface p-4">
+                  <p className="mb-3 text-[13px] font-medium text-text">Best-fit path</p>
+                  <div className="space-y-2 text-[13px] leading-6 text-muted">
+                    <span>I am a</span>
+                    <input
+                      value={templateValues.currentRole}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, currentRole: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                    <span>who wants to</span>
+                    <input
+                      value={templateValues.goal}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, goal: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                    <span>What paths fit me at</span>
+                    <input
+                      value={templateValues.company}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, company: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applyTemplate(`I am a ${templateValues.currentRole} who wants to ${templateValues.goal}. What paths fit me at ${templateValues.company}?`)
+                    }
+                    className="mt-4 text-[13px] font-medium text-primary"
+                  >
+                    Use template
+                  </button>
+                </div>
+
+                <div className="rounded-[12px] border border-border bg-surface p-4">
+                  <p className="mb-3 text-[13px] font-medium text-text">Compare directions</p>
+                  <div className="space-y-2 text-[13px] leading-6 text-muted">
+                    <span>At</span>
+                    <input
+                      value={templateValues.company}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, company: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                    <span>should I move toward</span>
+                    <input
+                      value={templateValues.pathA}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, pathA: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                    <span>or</span>
+                    <input
+                      value={templateValues.pathB}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, pathB: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                    <span>if I care about</span>
+                    <input
+                      value={templateValues.priority}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, priority: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      applyTemplate(
+                        `At ${templateValues.company}, should I move toward ${templateValues.pathA} or ${templateValues.pathB} if I care about ${templateValues.priority}?`,
+                      )
+                    }
+                    className="mt-4 text-[13px] font-medium text-primary"
+                  >
+                    Use template
+                  </button>
+                </div>
+
+                <div className="rounded-[12px] border border-border bg-surface p-4">
+                  <p className="mb-3 text-[13px] font-medium text-text">Constraint-aware path</p>
+                  <div className="space-y-2 text-[13px] leading-6 text-muted">
+                    <span>I enjoy</span>
+                    <input
+                      value={templateValues.strength}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, strength: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                    <span>and want to avoid</span>
+                    <input
+                      value={templateValues.constraint}
+                      onChange={(event) => setTemplateValues((current) => ({ ...current, constraint: event.target.value }))}
+                      className="w-full rounded-[8px] border border-border bg-bg px-3 py-2 text-text outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => applyTemplate(`I enjoy ${templateValues.strength} and want to avoid ${templateValues.constraint}. What should I aim for?`)}
+                    className="mt-4 text-[13px] font-medium text-primary"
+                  >
+                    Use template
+                  </button>
+                </div>
+              </div>
             </div>
 
             <button
