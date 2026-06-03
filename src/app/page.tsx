@@ -110,6 +110,8 @@ type CareerTemplateValues = {
   targetOrg: string;
 };
 
+const GENERIC_PATHWAY_REPORT_URL = "https://docs.google.com/document/d/1U1RGAehQwRypUTovF1KRlpiOFze0b-_2gc6fAH0KY0k/edit";
+
 const knownCompanies = ["Figma", "Accenture", "McKinsey", "Goldman Sachs", "Deloitte", "Infosys", "Tata 1MG"];
 const roleMatchers: Array<{ label: string; matcher: RegExp; tentative?: boolean }> = [
   { label: "UX Researcher", matcher: /\bux researcher\b/i },
@@ -358,6 +360,35 @@ function parseAnswerBlocks(answer: string): { intent?: string; blocks: AnswerBlo
   return { intent, blocks };
 }
 
+function buildCareerTemplatePrompt(values: CareerTemplateValues) {
+  const base = `I am ${values.name}, ${values.currentRole} at ${values.currentOrg}`;
+  if (values.targetOrg.trim()) {
+    return `${base} and looking for relevant career path at ${values.targetOrg.trim()}.`;
+  }
+
+  return `${base} and looking for a relevant next career path.`;
+}
+
+function defaultLearningPathForRole(role: FutureRole): LearningPath {
+  return (
+    fallbackConnections.find((connection) => connection.future.title === role.title)?.future.learningPath || {
+      skills: ["Strategic positioning", "AI collaboration", "Cross-functional influence"],
+      steps: [
+        `Clarify what success looks like in a move toward ${role.title}.`,
+        "Choose one live project where you can practice the new scope before making a formal transition.",
+        "Capture proof of impact in a short portfolio-style brief you can reuse in internal or external conversations.",
+      ],
+      resources: [
+        {
+          title: "CareerOS Pathway Workbook",
+          source: "Google Doc",
+          url: GENERIC_PATHWAY_REPORT_URL,
+        },
+      ],
+    }
+  );
+}
+
 function parseRoleConnections(answer: string): RoleConnection[] {
   const lines = answer
     .split("\n")
@@ -512,10 +543,16 @@ function AnswerContent({ answer }: { answer: string }) {
           return (
             <ul key={`${block.type}-${index}`} className="mb-4 list-none p-0">
               {block.items.map((item) => (
-                <li key={item} className="mb-2.5 rounded-[10px] border border-border px-4 py-3 text-[15px] leading-7 text-text last:mb-0">
-                  <span className="mr-2.5 inline-block h-2 w-2 rounded-full bg-primary align-middle" />
-                  <span className="align-middle">{item}</span>
-                </li>
+                /:$/.test(item) ? (
+                  <li key={item} className="mb-2 pt-1 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted last:mb-0">
+                    {item.slice(0, -1)}
+                  </li>
+                ) : (
+                  <li key={item} className="mb-2.5 rounded-[10px] border border-border px-4 py-3 text-[15px] leading-7 text-text last:mb-0">
+                    <span className="mr-2.5 inline-block h-2 w-2 rounded-full bg-primary align-middle" />
+                    <span className="align-middle">{item}</span>
+                  </li>
+                )
               ))}
             </ul>
           );
@@ -645,9 +682,7 @@ function LearningPathPanel({ role, onClose }: { role: FutureRoleNode; onClose: (
             </div>
           </div>
         </div>
-      ) : (
-        <p className="text-[14px] italic text-muted">Full learning path available in your CareerOS report.</p>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -883,7 +918,14 @@ export default function Home() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!message.trim() || loading) {
+    if (loading) {
+      return;
+    }
+
+    if (!message.trim()) {
+      setError("Please type your question or use the template first.");
+      setNeedsFollowUp(false);
+      setFollowUpQuestion("");
       return;
     }
 
@@ -914,15 +956,22 @@ export default function Home() {
 
       const nextAnswer = (data.answer || "").trim();
       const nextRoleMap = data.roleMap || buildRoleMap(data.roleConnections?.length ? data.roleConnections : parseRoleConnections(nextAnswer));
-      const nextFutureNodes = getFutureNodes(nextRoleMap);
+      const nextFutureNodes = getFutureNodes(nextRoleMap).map((node) => ({
+        ...node,
+        learningPath: node.learningPath || defaultLearningPathForRole({ title: node.label, description: node.description, fit: node.fit }),
+      }));
+      const hydratedRoleMap: RoleMap = {
+        nodes: [...getCurrentNodes(nextRoleMap), ...nextFutureNodes],
+        edges: nextRoleMap.edges,
+      };
       const nextSelectedRoleId = nextFutureNodes.find((node) => node.learningPath)?.id || nextFutureNodes[0]?.id || null;
 
       setAnswer(nextAnswer);
-      setReportUrl(data.reportUrl || "");
+      setReportUrl(data.reportUrl || GENERIC_PATHWAY_REPORT_URL);
       setSource(data.source || "live");
       setNeedsFollowUp(Boolean(data.needsFollowUp));
       setFollowUpQuestion(data.followUpQuestion || "");
-      setRoleMap(nextRoleMap);
+      setRoleMap(hydratedRoleMap);
       setSelectedRoleId(nextSelectedRoleId);
     } catch (submitError) {
       const nextMessage = submitError instanceof Error ? submitError.message : "Something went wrong.";
@@ -1025,11 +1074,7 @@ export default function Home() {
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
-                    applyTemplate(
-                      `I am ${templateValues.name}, ${templateValues.currentRole} at ${templateValues.currentOrg} and looking for relevant career path at ${templateValues.targetOrg || "an optional target organization"}.`,
-                    )
-                  }
+                  onClick={() => applyTemplate(buildCareerTemplatePrompt(templateValues))}
                   className="rounded-[999px] border border-primary px-4 py-2 text-[13px] font-medium text-primary transition hover:bg-[rgba(184,92,44,0.05)]"
                 >
                   Use this template
@@ -1094,24 +1139,19 @@ export default function Home() {
           {!loading && answer ? (
             <section className="fade-in mt-8 rounded-[6px] border border-border border-l-[3px] border-l-primary bg-surface px-8 py-7 shadow-[0_1px_3px_rgba(28,25,23,0.08)]">
               <AnswerContent answer={answer} />
-              <div className="my-6 border-t border-border" />
               {reportUrl ? (
-                <a
-                  href={reportUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex rounded-[6px] border border-primary bg-transparent px-5 py-2.5 text-[14px] text-primary transition hover:bg-[rgba(184,92,44,0.05)]"
-                >
-                  Get Full Pathway Report
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  className="inline-flex rounded-[6px] border border-primary bg-transparent px-5 py-2.5 text-[14px] text-primary transition hover:bg-[rgba(184,92,44,0.05)]"
-                >
-                  Get Full Pathway Report
-                </button>
-              )}
+                <>
+                  <div className="my-6 border-t border-border" />
+                  <a
+                    href={reportUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex rounded-[6px] border border-primary bg-transparent px-5 py-2.5 text-[14px] text-primary transition hover:bg-[rgba(184,92,44,0.05)]"
+                  >
+                    Open Career Pathway Doc
+                  </a>
+                </>
+              ) : null}
               {source ? <p className="mt-3 text-[12px] text-muted">Source: {source === "live" ? "Live intelligence" : "Sample fallback"}</p> : null}
             </section>
           ) : null}
@@ -1124,7 +1164,7 @@ export default function Home() {
             </section>
           ) : null}
 
-          {!loading && selectedRole ? <LearningPathPanel role={selectedRole} onClose={() => setSelectedRoleId(null)} /> : null}
+          {!loading && selectedRole && selectedRole.learningPath ? <LearningPathPanel role={selectedRole} onClose={() => setSelectedRoleId(null)} /> : null}
 
           {!loading && !needsFollowUp && futureNodes.length > 0 ? (
             <CareerEvolutionMap roleMap={derivedRoleMap} selectedRoleId={selectedRoleId} onSelectRole={setSelectedRoleId} />
