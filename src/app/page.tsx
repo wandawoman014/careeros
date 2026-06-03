@@ -110,7 +110,7 @@ type CareerTemplateValues = {
   targetOrg: string;
 };
 
-const GENERIC_PATHWAY_REPORT_URL = "https://docs.google.com/document/d/1U1RGAehQwRypUTovF1KRlpiOFze0b-_2gc6fAH0KY0k/edit";
+const GENERIC_PATHWAY_REPORT_URL = "https://drive.google.com/drive/folders/1VSCUVd2pwafNyXxPFj02dVPv5wEv3Ba9?usp=sharing";
 
 const knownCompanies = ["Figma", "Accenture", "McKinsey", "Goldman Sachs", "Deloitte", "Infosys", "Tata 1MG"];
 const roleMatchers: Array<{ label: string; matcher: RegExp; tentative?: boolean }> = [
