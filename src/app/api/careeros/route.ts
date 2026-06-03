@@ -25,12 +25,57 @@ type RoleConnection = {
   };
 };
 
+type CurrentRoleNode = {
+  id: string;
+  label: string;
+  type: "current";
+  department: string;
+};
+
+type FutureRoleNode = {
+  id: string;
+  label: string;
+  type: "future";
+  description: string;
+  fit: "High Fit" | "Medium Fit";
+  learningPath?: LearningPath;
+};
+
+type RoleMapNode = CurrentRoleNode | FutureRoleNode;
+
+type RoleMapEdge = {
+  from: string;
+  to: string;
+};
+
+type RoleMap = {
+  nodes: RoleMapNode[];
+  edges: RoleMapEdge[];
+};
+
+type CompanyContext = {
+  companyId: string;
+  companyName: string;
+};
+
 type CareerOSApiResponse = {
   answer: string;
+  companyId: string;
+  companyName: string;
   reportUrl?: string;
   roleConnections?: RoleConnection[];
+  roleMap?: RoleMap;
   source: "live" | "mock";
 };
+
+const companyDirectory: Array<CompanyContext & { aliases: string[] }> = [
+  { companyName: "Figma", companyId: "ORG-FIGMA-001", aliases: ["figma"] },
+  { companyName: "Accenture", companyId: "ORG-ACCENTURE-001", aliases: ["accenture"] },
+  { companyName: "McKinsey", companyId: "ORG-MCKINSEY-001", aliases: ["mckinsey"] },
+  { companyName: "Goldman Sachs", companyId: "ORG-GOLDMAN-001", aliases: ["goldman sachs", "goldman"] },
+  { companyName: "Deloitte", companyId: "ORG-DELOITTE-001", aliases: ["deloitte"] },
+  { companyName: "Infosys", companyId: "ORG-INFOSYS-001", aliases: ["infosys"] },
+];
 
 const fallbackConnections: RoleConnection[] = [
   {
@@ -50,12 +95,12 @@ const fallbackConnections: RoleConnection[] = [
           {
             title: "AI Workflow Design Fundamentals",
             source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
+            url: "https://orgos-supriya.vercel.app/",
           },
           {
             title: "Human-in-the-Loop Playbook",
             source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
+            url: "https://orgos-supriya.vercel.app/",
           },
         ],
       },
@@ -78,7 +123,7 @@ const fallbackConnections: RoleConnection[] = [
           {
             title: "AI Product Operating Model",
             source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
+            url: "https://orgos-supriya.vercel.app/",
           },
         ],
       },
@@ -101,7 +146,7 @@ const fallbackConnections: RoleConnection[] = [
           {
             title: "Decision Storytelling for AI Teams",
             source: "EvolutionOS Library",
-            url: "https://orgos.vercel.app",
+            url: "https://orgos-supriya.vercel.app/",
           },
         ],
       },
@@ -162,6 +207,30 @@ const asStringArray = (value: unknown) => {
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
 };
 
+const normalizeLookup = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+const findCompanyById = (companyId: string) =>
+  companyDirectory.find((company) => normalizeLookup(company.companyId) === normalizeLookup(companyId));
+
+const resolveCompanyContext = (...candidates: string[]): CompanyContext | null => {
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeLookup(candidate);
+    if (!normalizedCandidate) {
+      continue;
+    }
+
+    const directMatch = companyDirectory.find((company) =>
+      company.aliases.some((alias) => normalizedCandidate === normalizeLookup(alias) || normalizedCandidate.includes(normalizeLookup(alias))),
+    );
+
+    if (directMatch) {
+      return { companyId: directMatch.companyId, companyName: directMatch.companyName };
+    }
+  }
+
+  return null;
+};
+
 const normalizeResources = (value: unknown): ResourceItem[] => {
   if (!Array.isArray(value)) {
     return [];
@@ -169,7 +238,7 @@ const normalizeResources = (value: unknown): ResourceItem[] => {
 
   return value.flatMap((item) => {
     if (typeof item === "string" && item.trim()) {
-      return [{ title: item.trim(), source: "CareerOS resource", url: "https://orgos.vercel.app" }];
+      return [{ title: item.trim(), source: "CareerOS resource", url: "https://orgos-supriya.vercel.app/" }];
     }
 
     if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -186,7 +255,7 @@ const normalizeResources = (value: unknown): ResourceItem[] => {
       {
         title,
         source: asString(record.source) || asString(record.provider) || "CareerOS resource",
-        url: asString(record.url) || asString(record.link) || "https://orgos.vercel.app",
+        url: asString(record.url) || asString(record.link) || "https://orgos-supriya.vercel.app/",
       },
     ];
   });
@@ -279,7 +348,126 @@ const normalizeRoleConnections = (value: unknown): RoleConnection[] | undefined 
   return connections.length > 0 ? connections : undefined;
 };
 
-const normalizeWebhookPayload = (payload: unknown): Omit<CareerOSApiResponse, "source"> => {
+const normalizeRoleMapNode = (value: unknown): RoleMapNode | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const type = asString(record.type)?.toLowerCase();
+  const label = asString(record.label) || asString(record.title) || asString(record.name);
+  const id = asString(record.id);
+
+  if (!label || !id || (type !== "current" && type !== "future")) {
+    return null;
+  }
+
+  if (type === "current") {
+    return {
+      id,
+      label,
+      type,
+      department: asString(record.department) || asString(record.team) || "Default",
+    };
+  }
+
+  const fitSource = asString(record.fit) || asString(record.match) || "Medium Fit";
+  return {
+    id,
+    label,
+    type,
+    description: asString(record.description) || asString(record.summary) || "Full learning path available in your CareerOS report.",
+    fit: /high/i.test(fitSource) ? "High Fit" : "Medium Fit",
+    learningPath:
+      normalizeLearningPath(record.learningPath) ||
+      normalizeLearningPath(record.learning_path) ||
+      normalizeLearningPath(record.pathway) ||
+      normalizeLearningPath(record.learning),
+  };
+};
+
+const normalizeRoleMapEdge = (value: unknown): RoleMapEdge | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const from = asString(record.from) || asString(record.source) || asString(record.current_id);
+  const to = asString(record.to) || asString(record.target) || asString(record.future_id);
+
+  if (!from || !to) {
+    return null;
+  }
+
+  return { from, to };
+};
+
+const normalizeRoleMap = (value: unknown): RoleMap | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const nodesSource = Array.isArray(record.nodes) ? record.nodes : [];
+  const edgesSource = Array.isArray(record.edges) ? record.edges : [];
+  const nodes = nodesSource.map(normalizeRoleMapNode).filter((item): item is RoleMapNode => item !== null);
+  const edges = edgesSource.map(normalizeRoleMapEdge).filter((item): item is RoleMapEdge => item !== null);
+
+  if (nodes.length === 0 || edges.length === 0) {
+    return undefined;
+  }
+
+  return { nodes, edges };
+};
+
+const buildRoleMap = (connections: RoleConnection[]): RoleMap => {
+  const currentNodes: CurrentRoleNode[] = [];
+  const futureNodes: FutureRoleNode[] = [];
+  const edges: RoleMapEdge[] = [];
+  const currentNodeIds = new Map<string, string>();
+  const futureNodeIds = new Map<string, string>();
+
+  connections.forEach((connection) => {
+    const currentKey = `${connection.current.title}::${connection.current.department}`;
+    let currentId = currentNodeIds.get(currentKey);
+    if (!currentId) {
+      currentId = `current-${currentNodeIds.size + 1}`;
+      currentNodeIds.set(currentKey, currentId);
+      currentNodes.push({
+        id: currentId,
+        label: connection.current.title,
+        type: "current",
+        department: connection.current.department,
+      });
+    }
+
+    const futureKey = connection.future.title;
+    let futureId = futureNodeIds.get(futureKey);
+    if (!futureId) {
+      futureId = `future-${futureNodeIds.size + 1}`;
+      futureNodeIds.set(futureKey, futureId);
+      futureNodes.push({
+        id: futureId,
+        label: connection.future.title,
+        type: "future",
+        description: connection.future.description,
+        fit: connection.future.fit,
+        learningPath: connection.future.learningPath,
+      });
+    }
+
+    if (!edges.some((edge) => edge.from === currentId && edge.to === futureId)) {
+      edges.push({ from: currentId, to: futureId });
+    }
+  });
+
+  return { nodes: [...currentNodes, ...futureNodes], edges };
+};
+
+const normalizeWebhookPayload = (payload: unknown): Omit<CareerOSApiResponse, "source" | "companyId" | "companyName"> & {
+  companyId?: string;
+  companyName?: string;
+} => {
   if (typeof payload === "string") {
     return { answer: payload };
   }
@@ -305,13 +493,65 @@ const normalizeWebhookPayload = (payload: unknown): Omit<CareerOSApiResponse, "s
     normalizeRoleConnections(record.paths) ||
     normalizeRoleConnections(record.pathways);
 
+  const roleMap =
+    normalizeRoleMap(record.role_map) ||
+    normalizeRoleMap(record.roleMap) ||
+    normalizeRoleMap({ nodes: record.nodes, edges: record.edges }) ||
+    (roleConnections ? buildRoleMap(roleConnections) : undefined);
+
   return {
     answer,
     ...(asString(record.report_url) || asString(record.reportUrl) || asString(record.url)
       ? { reportUrl: asString(record.report_url) || asString(record.reportUrl) || asString(record.url) }
       : {}),
     ...(roleConnections ? { roleConnections } : {}),
+    ...(roleMap ? { roleMap } : {}),
+    ...(asString(record.company_id) || asString(record.companyId) || asString(record.organization_id) || asString(record.org_id)
+      ? { companyId: asString(record.company_id) || asString(record.companyId) || asString(record.organization_id) || asString(record.org_id) }
+      : {}),
+    ...(asString(record.company) || asString(record.company_name) || asString(record.organization)
+      ? { companyName: asString(record.company) || asString(record.company_name) || asString(record.organization) }
+      : {}),
   };
+};
+
+const hasNoCompanyData = (payload: unknown, normalized: ReturnType<typeof normalizeWebhookPayload>) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const status = asString(record.status)?.toLowerCase();
+  const error = asString(record.error)?.toLowerCase();
+  const answerMissing = !normalized.answer || /^webhook (response was empty|returned json without answer text\.)$/i.test(normalized.answer);
+  const mapMissing = !normalized.roleMap || normalized.roleMap.nodes.length === 0 || normalized.roleMap.edges.length === 0;
+  const connectionMissing = !normalized.roleConnections || normalized.roleConnections.length === 0;
+
+  return (
+    record.has_data === false ||
+    record.hasData === false ||
+    record.data_available === false ||
+    record.dataAvailable === false ||
+    record.found === false ||
+    status === "no_data" ||
+    status === "not_found" ||
+    error === "no_data" ||
+    error === "not_found" ||
+    (answerMissing && mapMissing && connectionMissing)
+  );
+};
+
+const resolveResponseCompany = (
+  normalized: ReturnType<typeof normalizeWebhookPayload>,
+  requestedCompany: CompanyContext,
+): CompanyContext => {
+  const byId = normalized.companyId ? findCompanyById(normalized.companyId) : undefined;
+  if (byId) {
+    return { companyId: byId.companyId, companyName: byId.companyName };
+  }
+
+  const inferred = resolveCompanyContext(normalized.companyName || "", normalized.answer || "");
+  return inferred || requestedCompany;
 };
 
 export async function POST(req: NextRequest) {
@@ -325,16 +565,30 @@ export async function POST(req: NextRequest) {
   const query = asString(payload.query) || asString(payload.question) || "";
   const currentRole = asString(payload.current_role) || asString(payload.currentRole) || "";
   const company = asString(payload.company) || asString(payload.company_name) || "";
+  const requestedCompany =
+    (asString(payload.company_id) ? findCompanyById(asString(payload.company_id) || "") : undefined) ||
+    resolveCompanyContext(company, query);
+  const requestedCompanyLabel = company || requestedCompany?.companyName || "this company";
 
   if (!query) {
     return NextResponse.json({ error: "Query cannot be blank." }, { status: 400 });
   }
 
+  if (!requestedCompany) {
+    return NextResponse.json(
+      { error: `No role intelligence available for ${requestedCompanyLabel}. Run OrgOS analysis first.` },
+      { status: 404 },
+    );
+  }
+
   const webhookUrl = (process.env.WEBHOOK_URL || process.env.MAKE_WEBHOOK_URL || "").trim();
   if (!webhookUrl) {
     return NextResponse.json({
-      answer: fallbackAnswer(currentRole, company, query),
+      answer: fallbackAnswer(currentRole, requestedCompany.companyName, query),
+      companyId: requestedCompany.companyId,
+      companyName: requestedCompany.companyName,
       roleConnections: fallbackConnections,
+      roleMap: buildRoleMap(fallbackConnections),
       source: "mock",
     } satisfies CareerOSApiResponse);
   }
@@ -348,7 +602,8 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         query,
         current_role: currentRole,
-        company,
+        company: requestedCompany.companyName,
+        company_id: requestedCompany.companyId,
         mode: "career",
       }),
       signal: AbortSignal.timeout(30000),
@@ -356,19 +611,36 @@ export async function POST(req: NextRequest) {
 
     const responseText = await webhookResponse.text();
     const parsed = safeParseJson(responseText);
-    const normalized = parsed === null ? { answer: responseText.trim() || fallbackAnswer(currentRole, company, query) } : normalizeWebhookPayload(parsed);
+    const normalized = parsed === null ? { answer: responseText.trim() || "Webhook response was empty." } : normalizeWebhookPayload(parsed);
 
-    return NextResponse.json({
-      answer: normalized.answer || fallbackAnswer(currentRole, company, query),
-      ...(normalized.reportUrl ? { reportUrl: normalized.reportUrl } : {}),
-      ...(normalized.roleConnections ? { roleConnections: normalized.roleConnections } : {}),
-      source: webhookResponse.ok ? "live" : "mock",
-    } satisfies CareerOSApiResponse);
+    if (hasNoCompanyData(parsed, normalized)) {
+      return NextResponse.json(
+        { error: `No role intelligence available for ${requestedCompany.companyName}. Run OrgOS analysis first.` },
+        { status: 404 },
+      );
+    }
+
+    const responseCompany = resolveResponseCompany(normalized, requestedCompany);
+    if (responseCompany.companyId !== requestedCompany.companyId) {
+      return NextResponse.json({ error: "Data mismatch - please retry" }, { status: 409 });
+    }
+
+    return NextResponse.json(
+      {
+        answer: normalized.answer || fallbackAnswer(currentRole, requestedCompany.companyName, query),
+        companyId: requestedCompany.companyId,
+        companyName: requestedCompany.companyName,
+        ...(normalized.reportUrl ? { reportUrl: normalized.reportUrl } : {}),
+        ...(normalized.roleConnections ? { roleConnections: normalized.roleConnections } : {}),
+        ...(normalized.roleMap ? { roleMap: normalized.roleMap } : {}),
+        source: webhookResponse.ok ? "live" : "mock",
+      } satisfies CareerOSApiResponse,
+      { status: webhookResponse.ok ? 200 : 502 },
+    );
   } catch {
-    return NextResponse.json({
-      answer: fallbackAnswer(currentRole, company, query),
-      roleConnections: fallbackConnections,
-      source: "mock",
-    } satisfies CareerOSApiResponse);
+    return NextResponse.json(
+      { error: `Unable to retrieve role intelligence for ${requestedCompany.companyName}.` },
+      { status: 502 },
+    );
   }
 }
