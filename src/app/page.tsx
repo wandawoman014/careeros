@@ -513,52 +513,30 @@ function findReportLink(reportUrl: string | undefined, answer: string) {
   return "";
 }
 
-function summarizeCareerBrief(answer: string) {
-  const { blocks } = parseAnswerBlocks(cleanAnswerText(answer));
-  const paragraphs = blocks.filter((block): block is Extract<AnswerBlock, { type: "paragraph" }> => block.type === "paragraph");
-  const ordered = blocks.find((block): block is Extract<AnswerBlock, { type: "ordered" }> => block.type === "ordered");
-  const unordered = blocks.find((block): block is Extract<AnswerBlock, { type: "unordered" }> => block.type === "unordered");
-  const seen = new Set<string>();
-  const paragraphItems = paragraphs
-    .map((item) => normalizeSummaryCandidate(item.text))
-    .filter((item) => item && !isReportBoilerplate(item))
-    .filter((item) => {
-      const key = item.toLowerCase();
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-  const listItems = (ordered?.items || unordered?.items || [])
-    .map((item) => normalizeSummaryCandidate(item))
-    .filter((item) => item && !isReportBoilerplate(item))
-    .filter((item) => {
-      const key = item.toLowerCase();
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
+function extractVisibleExcerpt(answer: string) {
+  const cleaned = cleanAnswerText(answer);
+  const { blocks } = parseAnswerBlocks(cleaned);
+  const segments = blocks.flatMap((block) => {
+    if (block.type === "paragraph") {
+      const text = normalizeSummaryCandidate(block.text);
+      return text && !isReportBoilerplate(text) ? [text] : [];
+    }
 
-  const bestFitCandidate = paragraphItems.find(isRolePathRecommendation) || listItems.find(isRolePathRecommendation) || paragraphItems[0] || listItems[0] || "";
-  const whyItFitsCandidate =
-    paragraphItems.find((item) => item !== bestFitCandidate && isWhyFitSentence(item)) ||
-    paragraphItems.find((item) => item !== bestFitCandidate && !isActionSentence(item)) ||
-    listItems.find((item) => item !== bestFitCandidate && isWhyFitSentence(item)) ||
-    "";
-  const skillItems = listItems.filter((item) => item !== bestFitCandidate && item !== whyItFitsCandidate && looksLikeSkillItem(item)).slice(0, 3);
-  const nextMoveCandidate =
-    paragraphItems.find((item) => item !== bestFitCandidate && item !== whyItFitsCandidate && isActionSentence(item)) ||
-    listItems.find((item) => item !== bestFitCandidate && item !== whyItFitsCandidate && isActionSentence(item)) ||
-    "";
+    if (block.type === "ordered" || block.type === "unordered") {
+      return block.items
+        .map((item) => normalizeSummaryCandidate(item))
+        .filter((item) => item && !isReportBoilerplate(item))
+        .map((item) => (block.type === "unordered" ? `• ${item}` : item));
+    }
+
+    return [];
+  });
+
+  const preview = segments.slice(0, 2);
 
   return {
-    bestFit: takeFirstSentence(bestFitCandidate),
-    whyItFits: takeFirstSentence(whyItFitsCandidate),
-    skillsToBuild: skillItems,
-    nextMove: takeFirstSentence(nextMoveCandidate),
+    preview,
+    hasMore: segments.length > preview.length,
   };
 }
 
@@ -782,63 +760,42 @@ function AnswerContent({ answer }: { answer: string }) {
 
 function CareerBrief({ answer, reportUrl }: { answer: string; reportUrl: string }) {
   const [expanded, setExpanded] = useState(false);
-  const brief = useMemo(() => summarizeCareerBrief(answer), [answer]);
+  const brief = useMemo(() => extractVisibleExcerpt(answer), [answer]);
   const resolvedReportUrl = useMemo(() => findReportLink(reportUrl, answer), [reportUrl, answer]);
-  const hasSummary = brief.bestFit || brief.whyItFits || brief.skillsToBuild.length > 0 || brief.nextMove;
+  const hasSummary = brief.preview.length > 0;
 
   return (
     <section className="fade-in mt-10 rounded-[20px] border border-border bg-surface px-7 py-7 shadow-[0_10px_30px_rgba(28,25,23,0.05)]">
-      <div className="flex items-start justify-between gap-4 max-sm:flex-col">
+      <div>
         <div>
           <p className="text-[11px] uppercase tracking-[0.14em] text-muted">Career Pathway Brief</p>
           <h2 className="font-display mt-2 text-[28px] text-text">What fits best</h2>
         </div>
-        {resolvedReportUrl ? (
-          <a
-            href={resolvedReportUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex rounded-full border border-primary px-4 py-2 text-[13px] font-medium text-primary transition hover:bg-[rgba(184,92,44,0.05)]"
-          >
-            Open report
-          </a>
-        ) : null}
       </div>
 
       {hasSummary ? (
         <div className="mt-7 grid gap-6">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.12em] text-muted">Best-fit direction</p>
-            <p className="mt-2 text-[18px] leading-8 text-text">{brief.bestFit || cleanAnswerText(answer)}</p>
-          </div>
-
-          {brief.whyItFits ? (
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.12em] text-muted">Why this path fits</p>
-              <p className="mt-2 text-[15px] leading-7 text-text">{brief.whyItFits}</p>
-            </div>
-          ) : null}
-
-          {brief.skillsToBuild.length > 0 ? (
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.12em] text-muted">Skills to build</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {brief.skillsToBuild.map((item) => (
-                  <span key={item} className="rounded-full border border-[rgba(184,92,44,0.18)] bg-[rgba(184,92,44,0.05)] px-3 py-1.5 text-[13px] text-text">
-                    {item}
-                  </span>
-                ))}
+          {brief.preview.map((item, index) =>
+            item.startsWith("• ") ? (
+              <div key={`${item}-${index}`} className="flex items-start gap-3 text-[15px] leading-7 text-text">
+                <span className="mt-2 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                <p>{item.replace(/^•\s+/, "")}</p>
               </div>
-            </div>
-          ) : null}
-
-          {brief.nextMove ? (
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.12em] text-muted">One concrete next move</p>
-              <p className="mt-2 text-[15px] leading-7 text-text">{brief.nextMove}</p>
-            </div>
-          ) : null}
+            ) : (
+              <p key={`${item}-${index}`} className={`text-text ${index === 0 ? "text-[18px] leading-8" : "text-[15px] leading-7"}`}>
+                {item}
+              </p>
+            ),
+          )}
         </div>
+      ) : null}
+
+      {resolvedReportUrl ? (
+        <p className="mt-5 text-[14px] leading-6 text-muted">
+          <a href={resolvedReportUrl} target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">
+            Open report
+          </a>
+        </p>
       ) : null}
 
       <div className="mt-6 border-t border-border pt-5">
@@ -1265,6 +1222,7 @@ export default function Home() {
     { key: "company", label: "Company", chip: context.company, accentClass: "border-border bg-surface" },
     { key: "intent", label: "Intent", chip: context.intent, accentClass: "border-border bg-surface" },
   ];
+  const hideHelpers = loading || !!answer || !!followUpQuestion;
 
   return (
     <main className="bg-bg text-text">
@@ -1327,32 +1285,44 @@ export default function Home() {
               ) : null}
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-1.5">
-              {chips.some((item) => item.chip) ? <p className="w-full text-[11px] uppercase tracking-[0.1em] text-muted">Detected context</p> : null}
-              {chips.map((item) =>
-                item.chip ? (
-                  <EditableChip
-                    key={item.key}
-                    chipKey={item.key}
-                    label={item.label}
-                    chip={item.chip}
-                    editingKey={editingKey}
-                    editingValue={editingValue}
-                    accentClass={item.accentClass}
-                    onStartEdit={handleStartEdit}
-                    onChangeValue={setEditingValue}
-                    onSave={handleSaveEdit}
-                    onCancel={() => {
-                      setEditingKey(null);
-                      setEditingValue("");
-                    }}
-                    onRemove={handleRemoveChip}
-                  />
-                ) : null,
-              )}
-            </div>
+            {!loading && answer ? <CareerBrief answer={answer} reportUrl={reportUrl} /> : null}
 
-            <div className="mt-6 rounded-[18px] border border-border/80 bg-[rgba(255,255,255,0.72)] p-5">
+            {!loading && followUpQuestion ? (
+              <section className="fade-in mt-6 rounded-[6px] border border-border bg-surface px-6 py-5 shadow-[0_1px_3px_rgba(28,25,23,0.08)]">
+                <p className="text-[12px] font-medium uppercase tracking-[0.1em] text-muted">Follow-up</p>
+                <p className="mt-2 text-[15px] leading-7 text-text">{followUpQuestion}</p>
+                <p className="mt-2 text-[13px] text-muted">Update the message or chips above, then ask again.</p>
+              </section>
+            ) : null}
+
+            {!hideHelpers ? (
+              <>
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {chips.some((item) => item.chip) ? <p className="w-full text-[11px] uppercase tracking-[0.1em] text-muted">Detected context</p> : null}
+                  {chips.map((item) =>
+                    item.chip ? (
+                      <EditableChip
+                        key={item.key}
+                        chipKey={item.key}
+                        label={item.label}
+                        chip={item.chip}
+                        editingKey={editingKey}
+                        editingValue={editingValue}
+                        accentClass={item.accentClass}
+                        onStartEdit={handleStartEdit}
+                        onChangeValue={setEditingValue}
+                        onSave={handleSaveEdit}
+                        onCancel={() => {
+                          setEditingKey(null);
+                          setEditingValue("");
+                        }}
+                        onRemove={handleRemoveChip}
+                      />
+                    ) : null,
+                  )}
+                </div>
+
+                <div className="mt-6 rounded-[18px] border border-border/80 bg-[rgba(255,255,255,0.72)] p-5">
               <div className="flex items-start justify-between gap-4 max-md:flex-col">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.1em] text-muted">Optional helper</p>
@@ -1397,7 +1367,9 @@ export default function Home() {
                   className="mx-1 inline-block min-w-[230px] rounded-[10px] border border-[rgba(184,92,44,0.18)] bg-white px-3 py-2 text-[16px] font-medium text-text outline-none"
                 />
               </div>
-            </div>
+                </div>
+              </>
+            ) : null}
 
           </form>
 
@@ -1419,16 +1391,6 @@ export default function Home() {
                 ))}
               </div>
               <p className="text-[14px] italic text-muted">CareerOS is mapping your path{activeCompanyName && activeCompanyName !== "this company" ? ` for ${activeCompanyName}` : ""}...</p>
-            </section>
-          ) : null}
-
-          {!loading && answer ? <CareerBrief answer={answer} reportUrl={reportUrl} /> : null}
-
-          {!loading && followUpQuestion ? (
-            <section className="fade-in mt-6 rounded-[6px] border border-border bg-surface px-6 py-5 shadow-[0_1px_3px_rgba(28,25,23,0.08)]">
-              <p className="text-[12px] font-medium uppercase tracking-[0.1em] text-muted">Follow-up</p>
-              <p className="mt-2 text-[15px] leading-7 text-text">{followUpQuestion}</p>
-              <p className="mt-2 text-[13px] text-muted">Update the message or chips above, then ask again.</p>
             </section>
           ) : null}
 
