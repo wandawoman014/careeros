@@ -410,20 +410,139 @@ function takeFirstSentence(text: string) {
   return match ? match[0].trim() : normalized;
 }
 
+function stripMarkdownMarkers(text: string) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/g, "")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .trim();
+}
+
+function normalizeSummaryCandidate(text: string) {
+  return stripMarkdownMarkers(text)
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+}
+
+function isReportBoilerplate(text: string) {
+  const normalized = normalizeSummaryCandidate(text);
+  if (!normalized) {
+    return true;
+  }
+
+  return (
+    /\byou already have\b/i.test(normalized) ||
+    /\bcompleted careeros pathway report\b/i.test(normalized) ||
+    /\bthat report contains\b/i.test(normalized) ||
+    /\bpathway report\b/i.test(normalized) ||
+    /\breport available\b/i.test(normalized) ||
+    /\bopen report\b/i.test(normalized) ||
+    /\bgoogle doc\b/i.test(normalized) ||
+    /\bgoogle drive\b/i.test(normalized)
+  );
+}
+
+function isRolePathRecommendation(text: string) {
+  const normalized = normalizeSummaryCandidate(text);
+  if (!normalized || isReportBoilerplate(normalized)) {
+    return false;
+  }
+
+  return (
+    /\b(ai|career|path|role|lead|strateg|operations|translator|designer|manager|associate|vp|analyst|researcher)\b/i.test(normalized) &&
+    !/\b(skills?|build|learn|next move|should do next)\b/i.test(normalized)
+  );
+}
+
+function isWhyFitSentence(text: string) {
+  const normalized = normalizeSummaryCandidate(text);
+  if (!normalized || isReportBoilerplate(normalized)) {
+    return false;
+  }
+
+  return /\b(because|fits|match|aligned|strength|experience|background|good fit|suited)\b/i.test(normalized);
+}
+
+function isActionSentence(text: string) {
+  const normalized = normalizeSummaryCandidate(text);
+  if (!normalized || isReportBoilerplate(normalized)) {
+    return false;
+  }
+
+  return /\b(next|start|build|focus|try|practice|create|document|choose|capture|clarify)\b/i.test(normalized);
+}
+
+function looksLikeSkillItem(text: string) {
+  const normalized = normalizeSummaryCandidate(text);
+  if (!normalized || isReportBoilerplate(normalized)) {
+    return false;
+  }
+
+  return (
+    /\b(skill|workflow|design|prompt|evaluation|research|strategy|operations|automation|synthesis|influence|orchestration|storytelling|decision)\b/i.test(
+      normalized,
+    ) && normalized.length < 100
+  );
+}
+
+function findReportLink(reportUrl: string | undefined, answer: string) {
+  const direct = reportUrl?.trim();
+  if (direct && /^https?:\/\/.+/i.test(direct)) {
+    return direct;
+  }
+
+  const match = answer.match(/https?:\/\/(?:docs|drive)\.google\.com\/[^\s)>"]+/i);
+  return match?.[0] || "";
+}
+
 function summarizeCareerBrief(answer: string) {
   const { blocks } = parseAnswerBlocks(cleanAnswerText(answer));
   const paragraphs = blocks.filter((block): block is Extract<AnswerBlock, { type: "paragraph" }> => block.type === "paragraph");
   const ordered = blocks.find((block): block is Extract<AnswerBlock, { type: "ordered" }> => block.type === "ordered");
   const unordered = blocks.find((block): block is Extract<AnswerBlock, { type: "unordered" }> => block.type === "unordered");
-  const listItems = (ordered?.items || unordered?.items || []).slice(0, 4);
+  const seen = new Set<string>();
+  const paragraphItems = paragraphs
+    .map((item) => normalizeSummaryCandidate(item.text))
+    .filter((item) => item && !isReportBoilerplate(item))
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  const listItems = (ordered?.items || unordered?.items || [])
+    .map((item) => normalizeSummaryCandidate(item))
+    .filter((item) => item && !isReportBoilerplate(item))
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
 
+  const bestFitCandidate = paragraphItems.find(isRolePathRecommendation) || listItems.find(isRolePathRecommendation) || paragraphItems[0] || listItems[0] || "";
+  const whyItFitsCandidate =
+    paragraphItems.find((item) => item !== bestFitCandidate && isWhyFitSentence(item)) ||
+    paragraphItems.find((item) => item !== bestFitCandidate && !isActionSentence(item)) ||
+    listItems.find((item) => item !== bestFitCandidate && isWhyFitSentence(item)) ||
+    "";
+  const skillItems = listItems.filter((item) => item !== bestFitCandidate && item !== whyItFitsCandidate && looksLikeSkillItem(item)).slice(0, 3);
   const nextMoveCandidate =
-    paragraphs.find((item) => /\b(next|build|start|focus|move|should)\b/i.test(item.text))?.text || listItems[3] || listItems[0] || "";
+    paragraphItems.find((item) => item !== bestFitCandidate && item !== whyItFitsCandidate && isActionSentence(item)) ||
+    listItems.find((item) => item !== bestFitCandidate && item !== whyItFitsCandidate && isActionSentence(item)) ||
+    "";
 
   return {
-    bestFit: takeFirstSentence(paragraphs[0]?.text || listItems[0] || ""),
-    whyItFits: takeFirstSentence(paragraphs[1]?.text || listItems[1] || ""),
-    skillsToBuild: listItems.slice(0, 3),
+    bestFit: takeFirstSentence(bestFitCandidate),
+    whyItFits: takeFirstSentence(whyItFitsCandidate),
+    skillsToBuild: skillItems,
     nextMove: takeFirstSentence(nextMoveCandidate),
   };
 }
@@ -652,6 +771,7 @@ function AnswerContent({ answer }: { answer: string }) {
 function CareerBrief({ answer, reportUrl }: { answer: string; reportUrl: string }) {
   const [expanded, setExpanded] = useState(false);
   const brief = useMemo(() => summarizeCareerBrief(answer), [answer]);
+  const resolvedReportUrl = useMemo(() => findReportLink(reportUrl, answer), [reportUrl, answer]);
   const hasSummary = brief.bestFit || brief.whyItFits || brief.skillsToBuild.length > 0 || brief.nextMove;
 
   return (
@@ -661,9 +781,9 @@ function CareerBrief({ answer, reportUrl }: { answer: string; reportUrl: string 
           <p className="text-[11px] uppercase tracking-[0.14em] text-muted">Career Pathway Brief</p>
           <h2 className="font-display mt-2 text-[28px] text-text">What fits best</h2>
         </div>
-        {reportUrl ? (
+        {resolvedReportUrl ? (
           <a
-            href={reportUrl}
+            href={resolvedReportUrl}
             target="_blank"
             rel="noreferrer"
             className="inline-flex rounded-full border border-primary px-4 py-2 text-[13px] font-medium text-primary transition hover:bg-[rgba(184,92,44,0.05)]"
