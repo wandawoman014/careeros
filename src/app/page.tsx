@@ -907,7 +907,7 @@ export default function Home() {
     setActiveCompanyName(context.company?.value || "this company");
 
     try {
-      const response = await fetch("/api/careeros", {
+      const response = await fetch("/api/ask", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

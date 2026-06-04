@@ -468,57 +468,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Message cannot be blank." }, { status: 400 });
   }
 
-  if (!currentRole) {
-    return NextResponse.json({
-      answer: "",
-      source: "mock",
-      needsFollowUp: true,
-      followUpQuestion: "What's your current role today?",
-      ...(companyId ? { companyId } : {}),
-      ...(company ? { companyName: company } : {}),
-    } satisfies CareerOSApiResponse);
-  }
-
-  if (!company) {
-    const generalConnections = fallbackConnections.map((connection) =>
-      connection.current.title === currentRole
-        ? connection
-        : {
-            ...connection,
-            current: {
-              title: currentRole,
-              department: departmentForRole(currentRole),
-            },
-          },
-    );
-
-    return NextResponse.json({
-      answer: generalCareerAnswer(currentRole, intent),
-      roleConnections: generalConnections,
-      roleMap: buildRoleMap(generalConnections),
-      source: "mock",
-      followUpQuestion: "I can tailor this to a company if you want.",
-    } satisfies CareerOSApiResponse);
-  }
-
   const webhookUrl = (process.env.WEBHOOK_URL || process.env.MAKE_WEBHOOK_URL || "").trim();
   if (!webhookUrl) {
+    const safeCurrentRole = currentRole || "your current role";
     const fallbackRoleConnections = fallbackConnections.map((connection) =>
-      connection.current.title === currentRole
+      connection.current.title === safeCurrentRole
         ? connection
         : {
             ...connection,
             current: {
-              title: currentRole,
-              department: departmentForRole(currentRole),
+              title: safeCurrentRole,
+              department: departmentForRole(safeCurrentRole),
             },
           },
     );
 
     return NextResponse.json({
-      answer: generalCareerAnswer(currentRole, intent),
-      companyId,
-      companyName: company,
+      answer: generalCareerAnswer(safeCurrentRole, intent),
+      ...(companyId ? { companyId } : {}),
+      ...(company ? { companyName: company } : {}),
       roleConnections: fallbackRoleConnections,
       roleMap: buildRoleMap(fallbackRoleConnections),
       source: "mock",
@@ -535,8 +503,8 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         message,
         query: message,
-        current_role: currentRole,
-        company,
+        ...(currentRole ? { current_role: currentRole } : {}),
+        ...(company ? { company } : {}),
         ...(companyId ? { company_id: companyId } : {}),
         ...(userId ? { user_id: userId } : {}),
         ...(memoryContext ? { memory_context: memoryContext } : {}),
@@ -546,8 +514,8 @@ export async function POST(req: NextRequest) {
         ...(targetOrg ? { target_org: targetOrg } : {}),
         mode: "career",
         context: {
-          current_role: currentRole,
-          company,
+          ...(currentRole ? { current_role: currentRole } : {}),
+          ...(company ? { company } : {}),
           ...(intent ? { intent } : {}),
           ...(personName ? { person_name: personName } : {}),
           ...(currentOrg ? { current_org: currentOrg } : {}),
@@ -566,25 +534,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Data mismatch - please retry" }, { status: 409 });
     }
 
+    const safeCurrentRole = currentRole || "your current role";
     const fallbackRoleConnections = fallbackConnections.map((connection) =>
-      connection.current.title === currentRole
+      connection.current.title === safeCurrentRole
         ? connection
         : {
             ...connection,
             current: {
-              title: currentRole,
-              department: departmentForRole(currentRole),
+              title: safeCurrentRole,
+              department: departmentForRole(safeCurrentRole),
             },
           },
     );
     const asksForCurrentRole = /current role today|what'?s your current role/i.test(normalized.followUpQuestion || "");
     const shouldSuppressRoleFollowUp = Boolean(currentRole) && asksForCurrentRole;
-    const answer = normalized.answer || generalCareerAnswer(currentRole, intent);
+    const answer = normalized.answer || generalCareerAnswer(safeCurrentRole, intent);
     const roleConnections = normalized.roleConnections || (normalized.needsFollowUp ? undefined : fallbackRoleConnections);
     const roleMap = normalized.roleMap || (roleConnections ? buildRoleMap(roleConnections) : undefined);
 
     if (userId && answer) {
-      await saveMemory(userId, `${currentRole} at ${company}: ${message}`, answer);
+      await saveMemory(userId, `${safeCurrentRole}${company ? ` at ${company}` : ""}: ${message}`, answer);
     }
 
     return NextResponse.json(
