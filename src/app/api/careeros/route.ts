@@ -1,4 +1,3 @@
-// redeploy marker: latest memory build
 import { getMemories, saveMemory } from "@/lib/memory";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -71,6 +70,9 @@ type CareerContext = {
   current_role?: string;
   company?: string;
   intent?: string;
+  person_name?: string;
+  current_org?: string;
+  target_org?: string;
 };
 
 const knownCompanyIds: Record<string, string> = {
@@ -127,6 +129,81 @@ const asString = (value: unknown) => (typeof value === "string" && value.trim().
 const normalizeLookup = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 const inferCompanyId = (company: string) => knownCompanyIds[normalizeLookup(company)];
+
+const sanitizeEntity = (value: string) =>
+  value
+    .replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+const collectOrganizationsFromMessage = (message: string) =>
+  Array.from(
+    message.matchAll(/\bat\s+([A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,5})(?=,|\s+and\b|\s+looking\b|\s+who\b|\s+where\b|\s+what\b|\s+for\b|[.?!]|$)/g),
+  )
+    .map((match) => sanitizeEntity(match[1] || ""))
+    .filter(Boolean);
+
+const inferCurrentOrgFromMessage = (message: string) => collectOrganizationsFromMessage(message)[0] || "";
+
+const inferTargetOrgFromMessage = (message: string) => {
+  const explicitTarget =
+    message.match(/\blooking\s+for\b.+?\bat\s+([A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,5})(?=[.?!]|$)/i) ||
+    message.match(/\bgrow\s+at\s+([A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,5})(?=[.?!]|$)/i);
+
+  const explicitCandidate = sanitizeEntity(explicitTarget?.[1] || "");
+  if (explicitCandidate) {
+    return explicitCandidate;
+  }
+
+  const organizations = collectOrganizationsFromMessage(message);
+  return organizations.length > 1 ? organizations[organizations.length - 1] : organizations[0] || "";
+};
+
+const inferPersonNameFromMessage = (message: string) => {
+  const explicitMatch =
+    message.match(/\bi am\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,3})\s*,/i) ||
+    message.match(/\bi am\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,3})\s+and\b/i);
+
+  return sanitizeEntity(explicitMatch?.[1] || "");
+};
+
+const inferRoleFromMessage = (message: string) => {
+  const normalized = message.toLowerCase();
+
+  if (/\bux researcher\b/i.test(message)) {
+    return "UX Researcher";
+  }
+  if (/\bdesign leader\b/i.test(message)) {
+    return "Design Leader";
+  }
+  if (/\bproduct manager\b/i.test(message) || /\bi'?m a pm\b|\bpm\b/i.test(message)) {
+    return "Product Manager";
+  }
+  if (/\bdesigner\b/i.test(message)) {
+    return "Designer";
+  }
+  if (/\bresearcher\b/i.test(message)) {
+    return "Researcher";
+  }
+  if (/\bengineer\b/i.test(message)) {
+    return "Engineer";
+  }
+
+  const explicitRoleMatch =
+    message.match(/i am\s+[^,]+,\s*([^,.]+?)\s+at\b/i) ||
+    message.match(/i am\s+(?:an?\s+)?([^,.]+?)\s+at\b/i) ||
+    message.match(/career paths? for\s+([a-z][a-z\s]+)/i);
+
+  if (explicitRoleMatch?.[1]) {
+    return explicitRoleMatch[1].trim().replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  if (normalized.includes("design head")) {
+    return "Design Head";
+  }
+
+  return "";
+};
 
 const departmentForRole = (role: string) => {
   const normalized = role.toLowerCase();
@@ -377,8 +454,12 @@ export async function POST(req: NextRequest) {
 
   const contextValue = payload.context && typeof payload.context === "object" && !Array.isArray(payload.context) ? (payload.context as CareerContext) : {};
   const message = asString(payload.message) || asString(payload.query) || asString(payload.question) || "";
-  const currentRole = asString(contextValue.current_role) || asString(payload.current_role) || asString(payload.currentRole) || "";
-  const company = asString(contextValue.company) || asString(payload.company) || "";
+  const currentRole =
+    asString(contextValue.current_role) || asString(payload.current_role) || asString(payload.currentRole) || inferRoleFromMessage(message);
+  const personName = asString(contextValue.person_name) || asString(payload.person_name) || inferPersonNameFromMessage(message) || undefined;
+  const currentOrg = asString(contextValue.current_org) || asString(payload.current_org) || inferCurrentOrgFromMessage(message) || undefined;
+  const targetOrg = asString(contextValue.target_org) || asString(payload.target_org) || inferTargetOrgFromMessage(message) || undefined;
+  const company = asString(contextValue.company) || asString(payload.company) || targetOrg || currentOrg || "";
   const intent = asString(contextValue.intent) || asString(payload.intent) || "";
   const companyId = asString(payload.company_id) || inferCompanyId(company) || undefined;
   const userId = asString(payload.user_id) || asString(payload.userId) || undefined;
@@ -460,11 +541,17 @@ export async function POST(req: NextRequest) {
         ...(userId ? { user_id: userId } : {}),
         ...(memoryContext ? { memory_context: memoryContext } : {}),
         ...(intent ? { intent } : {}),
+        ...(personName ? { person_name: personName } : {}),
+        ...(currentOrg ? { current_org: currentOrg } : {}),
+        ...(targetOrg ? { target_org: targetOrg } : {}),
         mode: "career",
         context: {
           current_role: currentRole,
           company,
           ...(intent ? { intent } : {}),
+          ...(personName ? { person_name: personName } : {}),
+          ...(currentOrg ? { current_org: currentOrg } : {}),
+          ...(targetOrg ? { target_org: targetOrg } : {}),
         },
       }),
       signal: AbortSignal.timeout(30000),
@@ -490,6 +577,8 @@ export async function POST(req: NextRequest) {
             },
           },
     );
+    const asksForCurrentRole = /current role today|what'?s your current role/i.test(normalized.followUpQuestion || "");
+    const shouldSuppressRoleFollowUp = Boolean(currentRole) && asksForCurrentRole;
     const answer = normalized.answer || generalCareerAnswer(currentRole, intent);
     const roleConnections = normalized.roleConnections || (normalized.needsFollowUp ? undefined : fallbackRoleConnections);
     const roleMap = normalized.roleMap || (roleConnections ? buildRoleMap(roleConnections) : undefined);
@@ -504,8 +593,8 @@ export async function POST(req: NextRequest) {
         ...(normalized.reportUrl ? { reportUrl: normalized.reportUrl } : {}),
         ...(roleConnections ? { roleConnections } : {}),
         ...(roleMap ? { roleMap } : {}),
-        ...(normalized.needsFollowUp ? { needsFollowUp: true } : {}),
-        ...(normalized.followUpQuestion ? { followUpQuestion: normalized.followUpQuestion } : {}),
+        ...(!shouldSuppressRoleFollowUp && normalized.needsFollowUp ? { needsFollowUp: true } : {}),
+        ...(!shouldSuppressRoleFollowUp && normalized.followUpQuestion ? { followUpQuestion: normalized.followUpQuestion } : {}),
         ...(normalized.companyId || companyId ? { companyId: normalized.companyId || companyId } : {}),
         ...(normalized.companyName || company ? { companyName: normalized.companyName || company } : {}),
         source: webhookResponse.ok ? "live" : "mock",
