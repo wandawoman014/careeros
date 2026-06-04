@@ -495,7 +495,22 @@ function findReportLink(reportUrl: string | undefined, answer: string) {
   }
 
   const match = answer.match(/https?:\/\/(?:docs|drive)\.google\.com\/[^\s)>"]+/i);
-  return match?.[0] || "";
+  if (match?.[0]) {
+    return match[0];
+  }
+
+  const cleaned = cleanAnswerText(answer);
+  if (
+    /\byou already have\b/i.test(cleaned) ||
+    /\bcompleted .*report\b/i.test(cleaned) ||
+    /\bpathway report\b/i.test(cleaned) ||
+    /\bfull report available\b/i.test(cleaned) ||
+    /\breport available\b/i.test(cleaned)
+  ) {
+    return GENERIC_PATHWAY_REPORT_URL;
+  }
+
+  return "";
 }
 
 function summarizeCareerBrief(answer: string) {
@@ -552,12 +567,9 @@ function isRenderableRoleMap(roleMap: RoleMap | null | undefined) {
     return false;
   }
 
-  const futureLabels = roleMap.nodes
-    .filter((node): node is FutureRoleNode => node.type === "future")
-    .map((node) => node.label);
-
-  const fallbackFutureLabels = ["AI Experience Strategy Lead", "AI Product Operations Partner", "AI Insight Translator"];
-  return !fallbackFutureLabels.every((label) => futureLabels.includes(label));
+  const currentCount = roleMap.nodes.filter((node) => node.type === "current").length;
+  const futureCount = roleMap.nodes.filter((node) => node.type === "future").length;
+  return currentCount > 0 && futureCount > 0;
 }
 
 function buildCareerTemplatePrompt(values: CareerTemplateValues) {
@@ -1060,6 +1072,7 @@ function CareerEvolutionMap({
 
 export default function Home() {
   const debounceRef = useRef<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [userId, setUserId] = useState("");
   const [message, setMessage] = useState("");
   const [context, setContext] = useState<CareerContext>({});
@@ -1157,6 +1170,12 @@ export default function Home() {
     }
   }
 
+  function handleCancel() {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    window.location.reload();
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1178,11 +1197,14 @@ export default function Home() {
     setActiveCompanyName(context.company?.value || "this company");
 
     try {
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
       const response = await fetch("/api/ask", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        signal: controller.signal,
         body: JSON.stringify({
           message,
           mode: "career",
@@ -1220,6 +1242,9 @@ export default function Home() {
       setRoleMap(hydratedRoleMap);
       setSelectedRoleId(nextSelectedRoleId);
     } catch (submitError) {
+      if (submitError instanceof Error && submitError.name === "AbortError") {
+        return;
+      }
       const nextMessage = submitError instanceof Error ? submitError.message : "Something went wrong.";
       setError(nextMessage);
       setAnswer("");
@@ -1230,6 +1255,7 @@ export default function Home() {
       setNeedsFollowUp(false);
       setFollowUpQuestion("");
     } finally {
+      abortControllerRef.current = null;
       setLoading(false);
     }
   }
@@ -1280,6 +1306,25 @@ export default function Home() {
                 placeholder="e.g. Where can a UX researcher grow at Figma? I'm a PM. What's next for me in AI-era teams? I don't want to become an engineer. What roles fit me at Accenture?"
                 className="min-h-[140px] w-full resize-none rounded-[12px] border border-border bg-surface px-5 py-4 text-[16px] text-text outline-none transition focus:border-primary focus:shadow-[0_0_0_3px_rgba(184,92,44,0.1)]"
               />
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="submit"
+                disabled={loading}
+                className="inline-flex rounded-[999px] border-none bg-primary px-7 py-3 text-[15px] font-medium text-white transition duration-150 ease-out hover:-translate-y-px hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                Map My Path
+              </button>
+              {loading ? (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="inline-flex rounded-[999px] border border-border bg-surface px-5 py-3 text-[14px] font-medium text-text transition hover:border-primary hover:text-primary"
+                >
+                  Cancel
+                </button>
+              ) : null}
             </div>
 
             <div className="mt-4 flex flex-wrap gap-1.5">
@@ -1354,15 +1399,6 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-6">
-              <button
-                type="submit"
-                disabled={loading}
-                className="inline-flex rounded-[999px] border-none bg-primary px-7 py-3 text-[15px] font-medium text-white transition duration-150 ease-out hover:-translate-y-px hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                Map My Path
-              </button>
-            </div>
           </form>
 
           {error ? (
